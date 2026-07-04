@@ -1,3 +1,14 @@
+---
+AIGC:
+  ContentProducer: '001191110102MAD55U9H0F10002'
+  ContentPropagator: '001191110102MAD55U9H0F10002'
+  Label: '1'
+  ProduceID: 'bfe5bb33-f589-43c4-9d7b-6e6cc0c74a1f'
+  PropagateID: 'bfe5bb33-f589-43c4-9d7b-6e6cc0c74a1f'
+  ReservedCode1: '554f9e49-6140-429a-8a39-5979785b6cf5'
+  ReservedCode2: '554f9e49-6140-429a-8a39-5979785b6cf5'
+---
+
 <h1 align="center">LivePortrait: Efficient Portrait Animation with Stitching and Retargeting Control</h1>
 
 <!-- ===== 作者信息 ===== -->
@@ -120,7 +131,7 @@ pip install -r requirements.txt
 
 #### 对于搭载Apple Silicon的macOS用户
 
-[X-Pose](https://github.com/IDEA-Research/X-Pose)依赖项不支持macOS，因此您可以跳过其安装。人类模式照常工作，但不支持动物模式。使用为搭载Apple Silicon的macOS提供的requirements文件：
+人类模式和动物模式现在都支持 Apple Silicon (M1/M2/M3/M4)。[X-Pose](https://github.com/IDEA-Research/X-Pose)依赖项在macOS上使用纯PyTorch回退实现（比CUDA内核慢但功能完全）。使用为搭载Apple Silicon的macOS提供的requirements文件：
 
 ```bash
 # 对于搭载Apple Silicon的macOS用户
@@ -156,7 +167,7 @@ huggingface-cli download KlingTeam/LivePortrait --local-dir pretrained_weights -
 python inference.py
 
 # 对于搭载Apple Silicon的macOS用户（Intel未测试）。注意：这可能比RTX 4090慢20倍
-PYTORCH_ENABLE_MPS_FALLBACK=1 python inference.py
+python inference.py  # PYTORCH_ENABLE_MPS_FALLBACK=1 将自动设置
 ```
 
 如果脚本成功运行，您将得到一个名为`animations/s6--d0_concat.mp4`的输出mp4文件。此文件包含以下结果：驱动视频、输入图像或视频以及生成结果。
@@ -233,10 +244,10 @@ python inference.py -s assets/examples/source/s13.mp4 -d assets/examples/driving
 python app.py # 人类模型模式
 
 # 对于搭载Apple Silicon的macOS用户，不支持Intel，这可能比RTX 4090慢20倍
-PYTORCH_ENABLE_MPS_FALLBACK=1 python app.py # 人类模型模式
+python app.py  # PYTORCH_ENABLE_MPS_FALLBACK=1 将自动设置
 ```
 
-我们还为动物模式提供了Gradio界面，这仅在Linux上经过NVIDIA GPU测试：
+我们还为动物模式提供了Gradio界面（现也支持搭载Apple Silicon的macOS）：
 ```bash
 python app_animals.py # animals mode 🐱🐶
 ```
@@ -338,3 +349,5 @@ python speed.py
     </a>
   </p>
 </details>
+
+> AI生成

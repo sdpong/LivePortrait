@@ -20,6 +20,7 @@ from .io import contiguous
 from .rprint import rlog as log
 from .face_analysis_diy import FaceAnalysisDIY
 from .human_landmark_runner import LandmarkRunner as HumanLandmark
+from .device import select_device
 
 def make_abs_path(fn):
     return osp.join(osp.dirname(osp.realpath(__file__)), fn)
@@ -44,22 +45,16 @@ class Cropper(object):
         self.image_type = kwargs.get("image_type", 'human_face')
         device_id = kwargs.get("device_id", 0)
         flag_force_cpu = kwargs.get("flag_force_cpu", False)
-        if flag_force_cpu:
-            device = "cpu"
-            face_analysis_wrapper_provider = ["CPUExecutionProvider"]
+
+        # Use the unified device selector
+        device = select_device(device_id, flag_force_cpu)
+
+        if device.startswith("cuda"):
+            face_analysis_wrapper_provider = ["CUDAExecutionProvider"]
         else:
-            try:
-                if torch.backends.mps.is_available():
-                    # Shape inference currently fails with CoreMLExecutionProvider
-                    # for the retinaface model
-                    device = "mps"
-                    face_analysis_wrapper_provider = ["CPUExecutionProvider"]
-                else:
-                    device = "cuda"
-                    face_analysis_wrapper_provider = ["CUDAExecutionProvider"]
-            except:
-                    device = "cuda"
-                    face_analysis_wrapper_provider = ["CUDAExecutionProvider"]
+            # MPS and CPU: InsightFace's retinaface has shape inference issues
+            # with CoreML EP, so use CPU EP for face detection
+            face_analysis_wrapper_provider = ["CPUExecutionProvider"]
         self.face_analysis_wrapper = FaceAnalysisDIY(
                     name="buffalo_l",
                     root=self.crop_cfg.insightface_root,

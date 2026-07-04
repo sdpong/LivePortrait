@@ -6,6 +6,7 @@ face detectoin and alignment using XPose
 
 import os
 import pickle
+import contextlib
 import torch
 import numpy as np
 from PIL import Image
@@ -14,6 +15,7 @@ from torchvision.ops import nms
 from .timer import Timer
 from .rprint import rlog as log
 from .helper import clean_state_dict
+from .device import select_device, inference_ctx
 
 from .dependencies.XPose import transforms as T
 from .dependencies.XPose.models import build_model
@@ -26,7 +28,7 @@ class XPoseRunner(object):
     def __init__(self, model_config_path, model_checkpoint_path, embeddings_cache_path=None, cpu_only=False, **kwargs):
         self.device_id = kwargs.get("device_id", 0)
         self.flag_use_half_precision = kwargs.get("flag_use_half_precision", True)
-        self.device = f"cuda:{self.device_id}" if not cpu_only else "cpu"
+        self.device = select_device(self.device_id, cpu_only)
         self.model = self.load_animal_model(model_config_path, model_checkpoint_path, self.device)
         self.timer = Timer()
         # Load cached embeddings if available
@@ -81,7 +83,7 @@ class XPoseRunner(object):
         image = image.to(self.device)
 
         with torch.no_grad():
-            with torch.autocast(device_type=self.device[:4], dtype=torch.float16, enabled=self.flag_use_half_precision):
+            with inference_ctx(self.device, self.flag_use_half_precision):
                 outputs = self.model(image[None], [target])
 
         logits = outputs["pred_logits"].sigmoid()[0]

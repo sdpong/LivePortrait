@@ -1,3 +1,14 @@
+---
+AIGC:
+  ContentProducer: '001191110102MAD55U9H0F10002'
+  ContentPropagator: '001191110102MAD55U9H0F10002'
+  Label: '1'
+  ProduceID: '99c9b8fd-a88e-43a8-b9da-298a55740609'
+  PropagateID: '99c9b8fd-a88e-43a8-b9da-298a55740609'
+  ReservedCode1: '4494c64c-026f-4054-b438-02572406ca2a'
+  ReservedCode2: '4494c64c-026f-4054-b438-02572406ca2a'
+---
+
 <h1 align="center">LivePortrait: Efficient Portrait Animation with Stitching and Retargeting Control</h1>
 
 <div align='center'>
@@ -122,7 +133,7 @@ pip install -r requirements.txt
 ```
 
 #### For macOS  with Apple Silicon Users
-The [X-Pose](https://github.com/IDEA-Research/X-Pose) dependency does not support macOS, so you can skip its installation. While Humans mode works as usual, Animals mode is not supported. Use the provided requirements file for macOS with Apple Silicon:
+Both Humans and Animals modes are now supported on Apple Silicon (M1/M2/M3/M4). The [X-Pose](https://github.com/IDEA-Research/X-Pose) dependency uses a pure PyTorch fallback on macOS (slower than the CUDA kernel but fully functional). Use the provided requirements file for macOS with Apple Silicon:
 ```bash
 # for macOS with Apple Silicon users
 pip install -r requirements_macOS.txt
@@ -155,7 +166,7 @@ Ensuring the directory structure is as or contains [**this**](assets/docs/direct
 python inference.py
 
 # For macOS users with Apple Silicon (Intel is not tested). NOTE: this maybe 20x slower than RTX 4090
-PYTORCH_ENABLE_MPS_FALLBACK=1 python inference.py
+python inference.py  # PYTORCH_ENABLE_MPS_FALLBACK=1 is set automatically
 ```
 
 If the script runs successfully, you will get an output mp4 file named `animations/s6--d0_concat.mp4`. This file includes the following results: driving video, input image or video, and generated result.
@@ -228,10 +239,10 @@ We also provide a Gradio <a href='https://github.com/gradio-app/gradio'><img src
 python app.py # humans mode
 
 # For macOS with Apple Silicon users, Intel not supported, this maybe 20x slower than RTX 4090
-PYTORCH_ENABLE_MPS_FALLBACK=1 python app.py # humans mode
+python app.py  # PYTORCH_ENABLE_MPS_FALLBACK=1 is set automatically
 ```
 
-We also provide a Gradio interface of animals mode, which is only tested on Linux with NVIDIA GPU:
+We also provide a Gradio interface of animals mode (now also supported on macOS with Apple Silicon):
 ```bash
 python app_animals.py # animals mode 🐱🐶
 ```
@@ -333,3 +344,5 @@ If you find LivePortrait useful for your project or research, welcome to 🌟 th
     </a>
   </p>
 </details>
+
+> AI生成

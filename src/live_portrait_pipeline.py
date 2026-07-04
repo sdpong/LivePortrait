@@ -5,7 +5,8 @@ Pipeline of LivePortrait (Human)
 """
 
 import torch
-torch.backends.cudnn.benchmark = True # disable CUDNN_BACKEND_EXECUTION_PLAN_DESCRIPTOR warning
+if torch.cuda.is_available():
+    torch.backends.cudnn.benchmark = True # disable CUDNN_BACKEND_EXECUTION_PLAN_DESCRIPTOR warning
 
 import cv2; cv2.setNumThreads(0); cv2.ocl.setUseOpenCL(False)
 import numpy as np

@@ -106,7 +106,7 @@ class UniPose(nn.Module):
         self.projection_kpt = MLP(512, hidden_dim, hidden_dim, 3)
 
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
         # model, _ = clip.load("ViT-B/32", device=device)
         # self.clip_model = model
         # visual_parameters = list(self.clip_model.visual.parameters())

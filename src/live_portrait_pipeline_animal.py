@@ -10,7 +10,8 @@ warnings.filterwarnings("ignore", message="torch.utils.checkpoint: please pass i
 warnings.filterwarnings("ignore", message="None of the inputs have requires_grad=True. Gradients will be None")
 
 import torch
-torch.backends.cudnn.benchmark = True # disable CUDNN_BACKEND_EXECUTION_PLAN_DESCRIPTOR warning
+if torch.cuda.is_available():
+    torch.backends.cudnn.benchmark = True # disable CUDNN_BACKEND_EXECUTION_PLAN_DESCRIPTOR warning
 
 import cv2; cv2.setNumThreads(0); cv2.ocl.setUseOpenCL(False)
 import numpy as np

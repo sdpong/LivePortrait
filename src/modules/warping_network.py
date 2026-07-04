@@ -9,6 +9,7 @@ from torch import nn
 import torch.nn.functional as F
 from .util import SameBlock2d
 from .dense_motion import DenseMotionNetwork
+from ..utils.device import grid_sample_3d_fallback
 
 
 class WarpingNetwork(nn.Module):
@@ -44,7 +45,7 @@ class WarpingNetwork(nn.Module):
         self.estimate_occlusion_map = estimate_occlusion_map
 
     def deform_input(self, inp, deformation):
-        return F.grid_sample(inp, deformation, align_corners=False)
+        return grid_sample_3d_fallback(inp, deformation, align_corners=False)
 
     def forward(self, feature_3d, kp_driving, kp_source):
         if self.dense_motion_network is not None:
