@@ -20,12 +20,11 @@ jobs:
 
       - name: Install PyTorch (CPU)
         run: |
-          pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+          pip install torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cpu
 
-      - name: Install base dependencies
+      - name: Install test dependencies
         run: |
-          pip install -r requirements_base.txt || true
-          pip install tyro pyyaml rich
+          pip install pyyaml rich tyro
 
       - name: Compile check all Python files
         run: |
@@ -104,10 +103,13 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install macOS dependencies
+      - name: Install PyTorch (macOS arm64 with MPS)
         run: |
-          pip install -r requirements_macOS.txt || true
-          pip install tyro pyyaml rich
+          pip install torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0
+
+      - name: Install test dependencies
+        run: |
+          pip install pyyaml rich tyro onnxruntime
 
       - name: Verify MPS availability
         run: |
@@ -165,17 +167,29 @@ jobs:
           print(f'grid_sample 2D on MPS: OK, shape={out_2d.shape}')
           "
 
+      - name: Test ms_deform_attn_core_pytorch on MPS
+        run: |
+          python -c "
+          import torch
+          import os
+          os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
+          import sys
+          sys.path.insert(0, 'src/utils/dependencies/XPose/models/UniPose/ops/functions')
+          from ms_deform_attn_func import ms_deform_attn_core_pytorch, _MS_CUDA_EXT_AVAILABLE
+          print(f'CUDA ext available: {_MS_CUDA_EXT_AVAILABLE}')
+          device = torch.device('mps')
+          N, S, M, D = 1, 4, 2, 8
+          Lq, L, P = 2, 1, 2
+          value = torch.randn(N, S, M, D, device=device)
+          spatial_shapes = torch.tensor([[2, 2]], device=device)
+          sampling_locations = torch.sigmoid(torch.randn(N, Lq, M, L, P, 2, device=device))
+          attention_weights = torch.softmax(torch.randn(N, Lq, M, L * P, device=device), dim=-1).view(N, Lq, M, L, P)
+          out = ms_deform_attn_core_pytorch(value, spatial_shapes, sampling_locations, attention_weights)
+          assert out.device.type == 'mps', f'Expected mps, got {out.device}'
+          print(f'ms_deform_attn_core_pytorch on MPS: shape={out.shape}, device={out.device}')
+          print('MSDeformAttn PyTorch fallback works on Apple Silicon!')
+          "
+
       - name: Run check_apple_silicon.py
         run: |
           python check_apple_silicon.py || true
-
-      - name: Test model loading (if weights available)
-        run: |
-          python -c "
-          import os
-          weights_dir = 'pretrained_weights'
-          if not os.path.isdir(weights_dir):
-              print('No pretrained weights - skipping model load test')
-          else:
-              print(f'Weights directory exists: {os.listdir(weights_dir)}')
-          " || true
