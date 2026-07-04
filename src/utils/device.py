@@ -115,8 +115,10 @@ def grid_sample_3d_fallback(input: torch.Tensor, grid: torch.Tensor, **kwargs) -
     import torch.nn.functional as F
 
     if input.device.type == 'mps':
-        input_cpu = input.cpu()
-        grid_cpu = grid.cpu()
+        # Detach + clone before moving to CPU to avoid MPS memory
+        # synchronization issues (segfault on some PyTorch versions)
+        input_cpu = input.detach().clone().cpu()
+        grid_cpu = grid.detach().clone().cpu()
         output = F.grid_sample(input_cpu, grid_cpu, **kwargs)
         return output.to('mps')
     else:
