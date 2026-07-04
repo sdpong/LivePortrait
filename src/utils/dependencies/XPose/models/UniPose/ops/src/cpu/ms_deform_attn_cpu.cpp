@@ -22,7 +22,7 @@ ms_deform_attn_cpu_forward(
     const at::Tensor &attn_weight,
     const int im2col_step)
 {
-    AT_ERROR("CPU forward not implemented; use the PyTorch fallback instead");
+    TORCH_CHECK(false, "CPU forward not implemented; use the PyTorch fallback instead");
 }
 
 std::vector<at::Tensor>
@@ -35,6 +35,6 @@ ms_deform_attn_cpu_backward(
     const at::Tensor &grad_output,
     const int im2col_step)
 {
-    AT_ERROR("CPU backward not implemented; use the PyTorch fallback instead");
+    TORCH_CHECK(false, "CPU backward not implemented; use the PyTorch fallback instead");
 }
 

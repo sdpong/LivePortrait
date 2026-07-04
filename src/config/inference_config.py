@@ -8,7 +8,7 @@ import cv2
 from numpy import ndarray
 import pickle as pkl
 from dataclasses import dataclass, field
-from typing import Literal, Tuple
+from typing import Literal
 from .base_config import PrintableConfig, make_abs_path
 
 def load_lip_array():

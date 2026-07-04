@@ -27,7 +27,7 @@ def check_python_version():
     status = "OK" if ok else "FAIL"
     print(f"  [{status}] Python version: {version.major}.{version.minor}.{version.micro}")
     if not ok:
-        print("       Recommended: Python 3.10+")
+        print("       Recommended: Python 3.10+ (3.13+ for best compatibility)")
     return ok
 
 

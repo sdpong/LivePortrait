@@ -58,13 +58,13 @@ def get_sine_pos_embed(
 def gen_encoder_output_proposals(memory: Tensor, memory_padding_mask: Tensor, spatial_shapes: Tensor, learnedwh=None):
     """
     Input:
-        - memory: bs, \sum{hw}, d_model
-        - memory_padding_mask: bs, \sum{hw}
+        - memory: bs, \\sum{hw}, d_model
+        - memory_padding_mask: bs, \\sum{hw}
         - spatial_shapes: nlevel, 2
         - learnedwh: 2
     Output:
-        - output_memory: bs, \sum{hw}, d_model
-        - output_proposals: bs, \sum{hw}, 4
+        - output_memory: bs, \\sum{hw}, d_model
+        - output_proposals: bs, \\sum{hw}, 4
     """
     N_, S_, C_ = memory.shape
     base_scale = 4.0

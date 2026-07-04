@@ -6,7 +6,7 @@ import numpy as np
 import cv2; cv2.setNumThreads(0); cv2.ocl.setUseOpenCL(False)
 
 from PIL import Image
-from typing import List, Tuple, Union
+from typing import Union
 from dataclasses import dataclass, field
 
 from ..config.crop_config import CropConfig

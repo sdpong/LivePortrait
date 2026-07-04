@@ -3,10 +3,10 @@ AIGC:
   ContentProducer: '001191110102MAD55U9H0F10002'
   ContentPropagator: '001191110102MAD55U9H0F10002'
   Label: '1'
-  ProduceID: 'd40665fe-d01d-4f7c-ab40-3c2bf13c60a2'
-  PropagateID: 'd40665fe-d01d-4f7c-ab40-3c2bf13c60a2'
-  ReservedCode1: '5eb30492-ab33-49fb-ae4c-85b2493eb963'
-  ReservedCode2: '5eb30492-ab33-49fb-ae4c-85b2493eb963'
+  ProduceID: 'bf21572a-1883-4a91-a33c-f865a7b750a5'
+  PropagateID: 'bf21572a-1883-4a91-a33c-f865a7b750a5'
+  ReservedCode1: 'a530fd6c-3f92-46c1-855e-42a0b302af2b'
+  ReservedCode2: 'a530fd6c-3f92-46c1-855e-42a0b302af2b'
 ---
 
 <h1 align="center">LivePortrait: Efficient Portrait Animation with Stitching and Retargeting Control</h1>
@@ -96,7 +96,7 @@ git clone https://github.com/KlingTeam/LivePortrait
 cd LivePortrait
 
 # 使用conda创建环境
-conda create -n LivePortrait python=3.10
+conda create -n LivePortrait python>=3.10
 conda activate LivePortrait
 ```
 

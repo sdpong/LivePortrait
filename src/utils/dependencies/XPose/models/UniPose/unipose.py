@@ -11,7 +11,6 @@ import copy
 import torch
 import torch.nn.functional as F
 from torch import nn
-from typing import List
 
 from util.keypoint_ops import keypoint_xyzxyz_to_xyxyzz
 from util.misc import NestedTensor, nested_tensor_from_tensor_list,inverse_sigmoid
