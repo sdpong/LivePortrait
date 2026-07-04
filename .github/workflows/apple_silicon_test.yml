@@ -32,10 +32,11 @@ jobs:
           python -m py_compile inference.py
           python -m py_compile inference_animals.py
           python -m py_compile check_apple_silicon.py
+          python -m py_compile speed.py
 
       - name: Import check - device module
         run: |
-          python -c "from src.utils.device import select_device, inference_ctx, grid_sample_3d_fallback, is_mps, is_cuda; print('device.py imports OK')"
+          python -c "from src.utils.device import select_device, inference_ctx, grid_sample_3d_fallback, is_mps, is_cuda, empty_cache, synchronize; print('device.py imports OK')"
 
       - name: Import check - MSDeformAttn fallback
         run: |
@@ -57,6 +58,16 @@ jobs:
           ctx = inference_ctx(device, flag_use_half_precision=False)
           print(f'Selected device: {device}')
           print(f'Inference context: {ctx}')
+          "
+
+      - name: Test device utilities (empty_cache, synchronize)
+        run: |
+          python -c "
+          from src.utils.device import empty_cache, synchronize
+          # These should be no-ops on CPU (not crash)
+          empty_cache('cpu')
+          synchronize('cpu')
+          print('empty_cache and synchronize on CPU: OK')
           "
 
       - name: Test grid_sample_3d_fallback

@@ -23,6 +23,7 @@ from .utils.camera import get_rotation_matrix
 from .utils.video import get_fps, has_audio_stream, concat_frames, images2video, add_audio_to_video
 from .utils.helper import is_square_video, mkdir, dct2device, basename
 from .utils.retargeting_utils import calc_eye_close_ratio, calc_lip_close_ratio
+from .utils.device import empty_cache
 
 
 def update_args(args, user_args):
@@ -430,6 +431,10 @@ class GradioPipeline(LivePortraitPipeline):
                     if flag_do_crop_input_retargeting_video:
                         I_p_pstbk = paste_back(I_p_i, source_M_c2o_lst[i], source_rgb_lst[i], mask_ori_lst[i])
                         I_p_pstbk_lst.append(I_p_pstbk)
+
+                    # Free MPS GPU memory periodically to prevent OOM on long videos
+                    if device == "mps" and i % 10 == 9:
+                        empty_cache(device)
         else:
             inference_cfg = self.live_portrait_wrapper.inference_cfg
             f_s_user_lst, x_s_user_lst, x_d_i_new_lst, source_M_c2o_lst, mask_ori_lst, source_rgb_lst, img_crop_256x256_lst, source_fps, n_frames = \
@@ -442,7 +447,7 @@ class GradioPipeline(LivePortraitPipeline):
             for i in track(range(n_frames), description='Silencing lip...', total=n_frames):
                 x_s_user_i = x_s_user_lst[i].to(device)
                 f_s_user_i = f_s_user_lst[i].to(device)
-                x_d_i_new = x_d_i_new_lst[i]
+                x_d_i_new = x_d_i_new_lst[i].to(device)
                 x_d_i_new = self.live_portrait_wrapper.stitching(x_s_user_i, x_d_i_new)
                 out = self.live_portrait_wrapper.warp_decode(f_s_user_i, x_s_user_i, x_d_i_new)
                 I_p_i = self.live_portrait_wrapper.parse_output(out['out'])[0]
@@ -451,6 +456,10 @@ class GradioPipeline(LivePortraitPipeline):
                 if flag_do_crop_input_retargeting_video:
                     I_p_pstbk = paste_back(I_p_i, source_M_c2o_lst[i], source_rgb_lst[i], mask_ori_lst[i])
                     I_p_pstbk_lst.append(I_p_pstbk)
+
+                # Free MPS GPU memory periodically to prevent OOM on long videos
+                if device == "mps" and i % 10 == 9:
+                    empty_cache(device)
 
         mkdir(self.args.output_dir)
         flag_source_has_audio = has_audio_stream(input_video)
@@ -532,7 +541,7 @@ class GradioPipeline(LivePortraitPipeline):
 
                 combined_lip_ratio_tensor_retargeting = self.live_portrait_wrapper.calc_combined_lip_ratio(c_d_lip_retargeting, source_lmk)
                 lip_delta_retargeting = self.live_portrait_wrapper.retarget_lip(x_s_user, combined_lip_ratio_tensor_retargeting)
-                f_s_user_lst.append(f_s_user); x_s_user_lst.append(x_s_user); lip_delta_retargeting_lst.append(lip_delta_retargeting.cpu().numpy().astype(np.float32))
+                f_s_user_lst.append(f_s_user.cpu()); x_s_user_lst.append(x_s_user.cpu()); lip_delta_retargeting_lst.append(lip_delta_retargeting.cpu().numpy().astype(np.float32))
             lip_delta_retargeting_lst_smooth = smooth(lip_delta_retargeting_lst, lip_delta_retargeting_lst[0].shape, device, driving_smooth_observation_variance_retargeting)
 
             return f_s_user_lst, x_s_user_lst, source_lmk_crop_lst, source_M_c2o_lst, mask_ori_lst, source_rgb_lst, img_crop_256x256_lst, lip_delta_retargeting_lst_smooth, source_fps, n_frames
@@ -587,7 +596,7 @@ class GradioPipeline(LivePortraitPipeline):
                 I_s = I_s_lst[i]
                 f_s_user = self.live_portrait_wrapper.extract_feature_3d(I_s)
                 x_d_i_new = scale_s * (x_c_s @ R_s + delta_new) + t_s
-                f_s_user_lst.append(f_s_user); x_s_user_lst.append(x_s_user); x_d_i_new_lst.append(x_d_i_new)
+                f_s_user_lst.append(f_s_user.cpu()); x_s_user_lst.append(x_s_user.cpu()); x_d_i_new_lst.append(x_d_i_new.cpu())
             return f_s_user_lst, x_s_user_lst, x_d_i_new_lst, source_M_c2o_lst, mask_ori_lst, source_rgb_lst, img_crop_256x256_lst, source_fps, n_frames
         else:
             # when press the clear button, go here

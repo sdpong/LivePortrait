@@ -54,8 +54,25 @@ class LivePortraitWrapper(object):
         # Optimize for inference
         if self.compile:
             torch._dynamo.config.suppress_errors = True  # Suppress errors and fall back to eager execution
-            self.warping_module = torch.compile(self.warping_module, mode='max-autotune')
-            self.spade_generator = torch.compile(self.spade_generator, mode='max-autotune')
+            if self.device.startswith("cuda"):
+                self.warping_module = torch.compile(self.warping_module, mode='max-autotune')
+                self.spade_generator = torch.compile(self.spade_generator, mode='max-autotune')
+            elif self.device == "mps":
+                # On MPS, use 'default' mode — 'max-autotune' attempts
+                # CUDA-specific optimizations (CUDA graphs, etc.) that fail.
+                # Only compile spade_generator; warping_module contains
+                # Conv3d + 3D grid_sample with MPS compatibility issues.
+                try:
+                    self.spade_generator = torch.compile(self.spade_generator, mode='default')
+                    log("torch.compile enabled for spade_generator on MPS (mode='default')")
+                except Exception as e:
+                    log(f"torch.compile on MPS failed: {e}. Falling back to eager mode.")
+            else:
+                # CPU compilation for testing/debugging
+                try:
+                    self.spade_generator = torch.compile(self.spade_generator, mode='default')
+                except Exception:
+                    pass
 
         self.timer = Timer()
 
@@ -356,7 +373,19 @@ class LivePortraitWrapperAnimal(LivePortraitWrapper):
         # Optimize for inference
         if self.compile:
             torch._dynamo.config.suppress_errors = True  # Suppress errors and fall back to eager execution
-            self.warping_module = torch.compile(self.warping_module, mode='max-autotune')
-            self.spade_generator = torch.compile(self.spade_generator, mode='max-autotune')
+            if self.device.startswith("cuda"):
+                self.warping_module = torch.compile(self.warping_module, mode='max-autotune')
+                self.spade_generator = torch.compile(self.spade_generator, mode='max-autotune')
+            elif self.device == "mps":
+                try:
+                    self.spade_generator = torch.compile(self.spade_generator, mode='default')
+                    log("torch.compile enabled for spade_generator on MPS (mode='default')")
+                except Exception as e:
+                    log(f"torch.compile on MPS failed: {e}. Falling back to eager mode.")
+            else:
+                try:
+                    self.spade_generator = torch.compile(self.spade_generator, mode='default')
+                except Exception:
+                    pass
 
         self.timer = Timer()

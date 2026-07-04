@@ -28,10 +28,18 @@ class LandmarkRunner(object):
 
     def __init__(self, **kwargs):
         ckpt_path = kwargs.get('ckpt_path')
-        onnx_provider = kwargs.get('onnx_provider', 'cuda')  # 默认用cuda
+        onnx_provider = kwargs.get('onnx_provider', None)  # auto-detect
         device_id = kwargs.get('device_id', 0)
         self.dsize = kwargs.get('dsize', 224)
         self.timer = Timer()
+
+        # Auto-detect provider if not specified
+        if onnx_provider is None:
+            import torch
+            if torch.cuda.is_available():
+                onnx_provider = 'cuda'
+            else:
+                onnx_provider = 'cpu'
 
         if onnx_provider.lower() == 'cuda':
             self.session = onnxruntime.InferenceSession(
@@ -40,11 +48,20 @@ class LandmarkRunner(object):
                 ]
             )
         elif onnx_provider.lower() == 'mps':
-            self.session = onnxruntime.InferenceSession(
-                ckpt_path, providers=[
-                    'CoreMLExecutionProvider'
-                ]
-            )
+            available = onnxruntime.get_available_providers()
+            if 'CoreMLExecutionProvider' in available:
+                self.session = onnxruntime.InferenceSession(
+                    ckpt_path, providers=['CoreMLExecutionProvider']
+                )
+            else:
+                # CoreML EP not installed; fall back to CPU with
+                # multi-threaded inference
+                opts = onnxruntime.SessionOptions()
+                opts.intra_op_num_threads = 4
+                self.session = onnxruntime.InferenceSession(
+                    ckpt_path, providers=['CPUExecutionProvider'],
+                    sess_options=opts
+                )
         else:
             opts = onnxruntime.SessionOptions()
             opts.intra_op_num_threads = 4  # 默认线程数为 4

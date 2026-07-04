@@ -83,7 +83,11 @@ class XPoseRunner(object):
         image = image.to(self.device)
 
         with torch.no_grad():
-            with inference_ctx(self.device, self.flag_use_half_precision):
+            # XPose's multi-scale deformable attention can produce NaN
+            # under float16 autocast on MPS, so disable half precision
+            # for this model on Apple Silicon
+            use_half = self.flag_use_half_precision and self.device != "mps"
+            with inference_ctx(self.device, use_half):
                 outputs = self.model(image[None], [target])
 
         logits = outputs["pred_logits"].sigmoid()[0]
