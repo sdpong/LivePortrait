@@ -174,11 +174,14 @@ def grid_sample_3d_fallback(input: torch.Tensor, grid: torch.Tensor, **kwargs) -
     is not natively supported. We move data to CPU, compute there,
     and move the result back to MPS.
 
-    The CPU computation is robust: we create fresh CPU tensors via
-    .cpu().clone().float() to avoid MPS memory sync issues
-    that can cause segfaults on some macOS configurations.
-    An extra try/except guard catches residual MPS transfer failures
-    and falls back to creating entirely new CPU tensors from numpy copies.
+    Optimizations over the original implementation:
+    - Skips .clone() when input is already on CPU (no MPS sync issues)
+    - Skips .float() when tensors are already float32
+    - Uses .contiguous() only when necessary (non-contiguous tensors
+      would cause grid_sample to fail on CPU)
+    - Accepts an optional `return_to_device` kwarg that can be set to
+      False by callers who want to chain multiple CPU operations before
+      a final single transfer back to MPS
 
     Args:
         input: 5D tensor (N, C, D_in, H_in, W_in)
@@ -190,20 +193,35 @@ def grid_sample_3d_fallback(input: torch.Tensor, grid: torch.Tensor, **kwargs) -
     """
     import torch.nn.functional as F
 
+    # Pop our custom kwarg before passing to F.grid_sample
+    return_to_device = kwargs.pop('return_to_device', True)
+
     if input.device.type != 'mps':
         return F.grid_sample(input, grid, **kwargs)
 
     # --- MPS path: compute grid_sample on CPU, return result to MPS ---
     orig_device = input.device
 
-    # Strategy 1: .cpu().clone().float() — copy data to CPU first, then
-    # clone & cast to ensure no shared MPS storage.  (Putting .clone()
-    # after .cpu() avoids touching MPS memory after the copy.)
+    # Strategy 1: .cpu() transfer. We only clone when coming from MPS
+    # (to avoid MPS sync issues) and only cast to float32 when needed.
     try:
-        input_cpu = input.cpu().clone().float()
-        grid_cpu = grid.cpu().clone().float()
+        if input.dtype == torch.float32:
+            input_cpu = input.cpu().clone()
+        else:
+            input_cpu = input.cpu().clone().float()
+        if grid.dtype == torch.float32:
+            grid_cpu = grid.cpu().clone()
+        else:
+            grid_cpu = grid.cpu().clone().float()
+        # Ensure contiguous for grid_sample correctness
+        if not input_cpu.is_contiguous():
+            input_cpu = input_cpu.contiguous()
+        if not grid_cpu.is_contiguous():
+            grid_cpu = grid_cpu.contiguous()
         output = F.grid_sample(input_cpu, grid_cpu, **kwargs)
-        return output.to(orig_device)
+        if return_to_device:
+            return output.to(orig_device)
+        return output
     except Exception as exc1:
         warnings.warn(
             f"grid_sample_3d_fallback: .cpu() transfer failed ({exc1}); "
@@ -212,13 +230,14 @@ def grid_sample_3d_fallback(input: torch.Tensor, grid: torch.Tensor, **kwargs) -
         )
 
     # Strategy 2: numpy round-trip — completely sidestep PyTorch's
-    # MPS → CPU transfer path by going through NumPy, which uses
-    # a different memory copy mechanism.
+    # MPS → CPU transfer path by going through NumPy.
     try:
-        input_cpu = torch.from_numpy(input.cpu().numpy()).float()
-        grid_cpu = torch.from_numpy(grid.cpu().numpy()).float()
+        input_cpu = torch.from_numpy(input.cpu().numpy()).float().contiguous()
+        grid_cpu = torch.from_numpy(grid.cpu().numpy()).float().contiguous()
         output = F.grid_sample(input_cpu, grid_cpu, **kwargs)
-        return output.to(orig_device)
+        if return_to_device:
+            return output.to(orig_device)
+        return output
     except Exception as exc2:
         warnings.warn(
             f"grid_sample_3d_fallback: numpy round-trip also failed ({exc2}); "
@@ -226,26 +245,25 @@ def grid_sample_3d_fallback(input: torch.Tensor, grid: torch.Tensor, **kwargs) -
             stacklevel=2,
         )
 
-    # Strategy 3: Compute on CPU and attempt to return to original device.
-    # If returning to MPS also fails, we return a CPU tensor and warn
-    # that downstream code may encounter device-mismatch errors.
+    # Strategy 3: Last resort
     try:
-        input_cpu = input.cpu().clone().float()
-        grid_cpu = grid.cpu().clone().float()
-        result = F.grid_sample(input_cpu, grid_cpu, **kwargs)
-        try:
-            return result.to(orig_device)
-        except Exception as ret_exc:
-            warnings.warn(
-                f"grid_sample_3d_fallback: could not return result to {orig_device} "
-                f"({ret_exc}). Returning CPU tensor — downstream operations may fail.",
-                stacklevel=2,
-            )
-            return result
-    except Exception:
-        # Last resort: try with contiguous clones
         input_cpu = input.cpu().contiguous().clone().float()
         grid_cpu = grid.cpu().contiguous().clone().float()
+        result = F.grid_sample(input_cpu, grid_cpu, **kwargs)
+        if return_to_device:
+            try:
+                return result.to(orig_device)
+            except Exception as ret_exc:
+                warnings.warn(
+                    f"grid_sample_3d_fallback: could not return result to {orig_device} "
+                    f"({ret_exc}). Returning CPU tensor — downstream operations may fail.",
+                    stacklevel=2,
+                )
+        return result
+    except Exception:
+        # Absolute last resort: try with nothing
+        input_cpu = input.cpu().clone().float().contiguous()
+        grid_cpu = grid.cpu().clone().float().contiguous()
         result = F.grid_sample(input_cpu, grid_cpu, **kwargs)
         try:
             return result.to(orig_device)

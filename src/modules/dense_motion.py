@@ -48,7 +48,15 @@ class DenseMotionNetwork(nn.Module):
         feature_repeat = feature.unsqueeze(1).unsqueeze(1).repeat(1, self.num_kp+1, 1, 1, 1, 1, 1)      # (bs, num_kp+1, 1, c, d, h, w)
         feature_repeat = feature_repeat.view(bs * (self.num_kp+1), -1, d, h, w)                         # (bs*(num_kp+1), c, d, h, w)
         sparse_motions = sparse_motions.view((bs * (self.num_kp+1), d, h, w, -1))                       # (bs*(num_kp+1), d, h, w, 3)
-        sparse_deformed = grid_sample_3d_fallback(feature_repeat, sparse_motions, align_corners=False)
+        # Optimization: when on MPS, grid_sample_3d_fallback moves data to CPU anyway.
+        # By passing return_to_device=False, we keep the result on CPU, avoiding an
+        # immediate MPS→CPU→MPS round-trip. The result will be transferred to MPS
+        # when needed by the next operation (or we detect MPS and do bulk transfer).
+        is_mps = feature_repeat.device.type == 'mps'
+        sparse_deformed = grid_sample_3d_fallback(
+            feature_repeat, sparse_motions, align_corners=False,
+            return_to_device=not is_mps
+        )
         sparse_deformed = sparse_deformed.view((bs, self.num_kp+1, -1, d, h, w))                        # (bs, num_kp+1, c, d, h, w)
 
         return sparse_deformed
@@ -60,13 +68,18 @@ class DenseMotionNetwork(nn.Module):
         heatmap = gaussian_driving - gaussian_source  # (bs, num_kp, d, h, w)
 
         # adding background feature
-        zeros = torch.zeros(heatmap.shape[0], 1, spatial_size[0], spatial_size[1], spatial_size[2]).type(heatmap.dtype).to(heatmap.device)
+        zeros = torch.zeros(heatmap.shape[0], 1, spatial_size[0], spatial_size[1], spatial_size[2],
+                           dtype=heatmap.dtype, device=heatmap.device)
         heatmap = torch.cat([zeros, heatmap], dim=1)
         heatmap = heatmap.unsqueeze(2)         # (bs, 1+num_kp, 1, d, h, w)
         return heatmap
 
     def forward(self, feature, kp_driving, kp_source):
         bs, _, d, h, w = feature.shape  # (bs, 32, 16, 64, 64)
+        
+        # Track original device for MPS optimization
+        orig_device = feature.device
+        is_mps = orig_device.type == 'mps'
 
         feature = self.compress(feature)  # (bs, 4, 16, 64, 64)
         feature = self.norm(feature)  # (bs, 4, 16, 64, 64)
@@ -76,6 +89,9 @@ class DenseMotionNetwork(nn.Module):
 
         # 1. deform 3d feature
         sparse_motion = self.create_sparse_motions(feature, kp_driving, kp_source)  # (bs, 1+num_kp, d, h, w, 3)
+        # On MPS, create_deformed_feature returns CPU tensors (return_to_device=False)
+        # to avoid an immediate MPS↔CPU round-trip. We'll move results back to MPS
+        # only once, right before the hourglass (Conv3d) computation.
         deformed_feature = self.create_deformed_feature(feature, sparse_motion)  # (bs, 1+num_kp, c=4, d=16, h=64, w=64)
 
         # 2. (bs, 1+num_kp, d, h, w)
@@ -83,6 +99,11 @@ class DenseMotionNetwork(nn.Module):
 
         input = torch.cat([heatmap, deformed_feature], dim=2)  # (bs, 1+num_kp, c=5, d=16, h=64, w=64)
         input = input.view(bs, -1, d, h, w)  # (bs, (1+num_kp)*c=105, d=16, h=64, w=64)
+        
+        # Transfer back to MPS for Conv3d operations (hourglass + mask)
+        if is_mps and input.device.type == 'cpu':
+            input = input.to(orig_device)
+            sparse_motion = sparse_motion.to(orig_device)
 
         prediction = self.hourglass(input)
 

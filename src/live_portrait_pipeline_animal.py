@@ -159,45 +159,48 @@ class LivePortraitPipelineAnimal(object):
         if inf_cfg.flag_pasteback and inf_cfg.flag_do_crop and inf_cfg.flag_stitching:
             mask_ori_float = prepare_paste_back(inf_cfg.mask_crop, crop_info['M_c2o'], dsize=(img_rgb.shape[1], img_rgb.shape[0]))
 
+        ######## pre-convert motion templates to device ########
+        driving_motion_on_device = [dct2device(m, device) for m in driving_template_dct['motion']]
+
         ######## animate ########
         I_p_lst = []
-        for i in track(range(n_frames), description='🚀Animating...', total=n_frames):
+        with torch.no_grad():
+            for i in track(range(n_frames), description='🚀Animating...', total=n_frames):
 
-            x_d_i_info = driving_template_dct['motion'][i]
-            x_d_i_info = dct2device(x_d_i_info, device)
+                x_d_i_info = driving_motion_on_device[i]
 
-            R_d_i = x_d_i_info['R'] if 'R' in x_d_i_info.keys() else x_d_i_info['R_d']  # compatible with previous keys
-            delta_new = x_d_i_info['exp']
-            t_new = x_d_i_info['t']
-            t_new[..., 2].fill_(0)  # zero tz
-            scale_new = x_s_info['scale']
+                R_d_i = x_d_i_info['R'] if 'R' in x_d_i_info.keys() else x_d_i_info['R_d']  # compatible with previous keys
+                delta_new = x_d_i_info['exp']
+                t_new = x_d_i_info['t'].clone()  # clone to prevent corrupting template (t_new is modified in-place below)
+                t_new[..., 2].fill_(0)  # zero tz
+                scale_new = x_s_info['scale']
 
-            x_d_i = scale_new * (x_c_s @ R_d_i + delta_new) + t_new
+                x_d_i = scale_new * (x_c_s @ R_d_i + delta_new) + t_new
 
-            if i == 0:
-                x_d_0 = x_d_i
-                motion_multiplier = calc_motion_multiplier(x_s, x_d_0)
+                if i == 0:
+                    x_d_0 = x_d_i
+                    motion_multiplier = calc_motion_multiplier(x_s, x_d_0)
 
-            x_d_diff = (x_d_i - x_d_0) * motion_multiplier
-            x_d_i = x_d_diff + x_s
+                x_d_diff = (x_d_i - x_d_0) * motion_multiplier
+                x_d_i = x_d_diff + x_s
 
-            if not inf_cfg.flag_stitching:
-                pass
-            else:
-                x_d_i = self.live_portrait_wrapper_animal.stitching(x_s, x_d_i)
+                if not inf_cfg.flag_stitching:
+                    pass
+                else:
+                    x_d_i = self.live_portrait_wrapper_animal.stitching(x_s, x_d_i)
 
-            x_d_i = x_s + (x_d_i - x_s) * inf_cfg.driving_multiplier
-            out = self.live_portrait_wrapper_animal.warp_decode(f_s, x_s, x_d_i)
-            I_p_i = self.live_portrait_wrapper_animal.parse_output(out['out'])[0]
-            I_p_lst.append(I_p_i)
+                x_d_i = x_s + (x_d_i - x_s) * inf_cfg.driving_multiplier
+                out = self.live_portrait_wrapper_animal.warp_decode(f_s, x_s, x_d_i)
+                I_p_i = self.live_portrait_wrapper_animal.parse_output(out['out'])[0]
+                I_p_lst.append(I_p_i)
 
-            # Free MPS GPU memory periodically to prevent OOM on long videos
-            if device == "mps" and i % 10 == 9:
-                empty_cache(device)
+                # Free MPS GPU memory periodically to prevent OOM on long videos
+                if device == "mps" and i % 10 == 9:
+                    empty_cache(device)
 
-            if inf_cfg.flag_pasteback and inf_cfg.flag_do_crop and inf_cfg.flag_stitching:
-                I_p_pstbk = paste_back(I_p_i, crop_info['M_c2o'], img_rgb, mask_ori_float)
-                I_p_pstbk_lst.append(I_p_pstbk)
+                if inf_cfg.flag_pasteback and inf_cfg.flag_do_crop and inf_cfg.flag_stitching:
+                    I_p_pstbk = paste_back(I_p_i, crop_info['M_c2o'], img_rgb, mask_ori_float)
+                    I_p_pstbk_lst.append(I_p_pstbk)
 
         mkdir(args.output_dir)
         wfp_concat = None
