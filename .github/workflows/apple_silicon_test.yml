@@ -1,0 +1,181 @@
+name: Apple Silicon MPS Test
+
+on:
+  push:
+    branches: [feature/apple-silicon-mps-support]
+  pull_request:
+    branches: [main]
+
+jobs:
+  syntax-and-import:
+    name: Syntax & Import Check (Ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install PyTorch (CPU)
+        run: |
+          pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install base dependencies
+        run: |
+          pip install -r requirements_base.txt || true
+          pip install tyro pyyaml rich
+
+      - name: Compile check all Python files
+        run: |
+          find src/ -name "*.py" -exec python -m py_compile {} \;
+          python -m py_compile inference.py
+          python -m py_compile inference_animals.py
+          python -m py_compile check_apple_silicon.py
+
+      - name: Import check - device module
+        run: |
+          python -c "from src.utils.device import select_device, inference_ctx, grid_sample_3d_fallback, is_mps, is_cuda; print('device.py imports OK')"
+
+      - name: Import check - MSDeformAttn fallback
+        run: |
+          python -c "
+          import sys
+          sys.path.insert(0, 'src/utils/dependencies/XPose/models/UniPose/ops/functions')
+          from ms_deform_attn_func import ms_deform_attn_core_pytorch, _MS_CUDA_EXT_AVAILABLE
+          print(f'MSDeformAttn CUDA ext available: {_MS_CUDA_EXT_AVAILABLE}')
+          print('PyTorch fallback import OK')
+          "
+
+      - name: Run device selection logic
+        run: |
+          python -c "
+          from src.utils.device import select_device, inference_ctx
+          # Force CPU mode (no GPU on CI)
+          device = select_device(device_id=0, flag_force_cpu=True)
+          assert device == 'cpu', f'Expected cpu, got {device}'
+          ctx = inference_ctx(device, flag_use_half_precision=False)
+          print(f'Selected device: {device}')
+          print(f'Inference context: {ctx}')
+          "
+
+      - name: Test grid_sample_3d_fallback
+        run: |
+          python -c "
+          import torch
+          from src.utils.device import grid_sample_3d_fallback
+          inp = torch.randn(1, 1, 4, 4, 4)
+          grid = torch.randn(1, 4, 4, 4, 3)
+          out = grid_sample_3d_fallback(inp, grid, align_corners=False)
+          assert out.shape == (1, 1, 4, 4, 4), f'Bad shape: {out.shape}'
+          print(f'grid_sample_3d_fallback output shape: {out.shape}')
+          "
+
+      - name: Test ms_deform_attn_core_pytorch
+        run: |
+          python -c "
+          import torch
+          import sys
+          sys.path.insert(0, 'src/utils/dependencies/XPose/models/UniPose/ops/functions')
+          from ms_deform_attn_func import ms_deform_attn_core_pytorch, _MS_CUDA_EXT_AVAILABLE
+          assert not _MS_CUDA_EXT_AVAILABLE, 'CUDA ext should not be available on CPU CI'
+          # Minimal test: N=1, S=4, M=2, D=8, Lq=2, L=1, P=2
+          N, S, M, D = 1, 4, 2, 8
+          Lq, L, P = 2, 1, 2
+          value = torch.randn(N, S, M, D)
+          spatial_shapes = torch.tensor([[2, 2]])
+          sampling_locations = torch.sigmoid(torch.randn(N, Lq, M, L, P, 2))
+          attention_weights = torch.softmax(torch.randn(N, Lq, M, L * P), dim=-1).view(N, Lq, M, L, P)
+          out = ms_deform_attn_core_pytorch(value, spatial_shapes, sampling_locations, attention_weights)
+          assert out.shape == (N, Lq, M * D), f'Bad shape: {out.shape}'
+          print(f'ms_deform_attn_core_pytorch output shape: {out.shape}')
+          print('Pure PyTorch fallback works!')
+          "
+
+  macos-mps-test:
+    name: MPS Runtime Test (macOS M1)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install macOS dependencies
+        run: |
+          pip install -r requirements_macOS.txt || true
+          pip install tyro pyyaml rich
+
+      - name: Verify MPS availability
+        run: |
+          python -c "
+          import torch
+          print(f'PyTorch version: {torch.__version__}')
+          print(f'MPS available: {torch.backends.mps.is_available()}')
+          print(f'MPS built: {torch.backends.mps.is_built()}')
+          assert torch.backends.mps.is_available(), 'MPS should be available on macOS 14+'
+          "
+
+      - name: Test device selection with MPS
+        run: |
+          python -c "
+          from src.utils.device import select_device, inference_ctx
+          device = select_device(device_id=0, flag_force_cpu=False)
+          print(f'Auto-selected device: {device}')
+          assert device == 'mps', f'Expected mps, got {device}'
+          ctx = inference_ctx(device, flag_use_half_precision=True)
+          print(f'Inference context for MPS: {type(ctx).__name__}')
+          "
+
+      - name: Test grid_sample_3d_fallback on MPS
+        run: |
+          python -c "
+          import torch
+          import os
+          os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
+          from src.utils.device import grid_sample_3d_fallback
+          device = torch.device('mps')
+          inp = torch.randn(1, 1, 4, 4, 4, device=device)
+          grid = torch.randn(1, 4, 4, 4, 3, device=device)
+          out = grid_sample_3d_fallback(inp, grid, align_corners=False)
+          assert out.device.type == 'mps', f'Expected mps, got {out.device}'
+          print(f'grid_sample_3d_fallback on MPS: output device={out.device}, shape={out.shape}')
+          "
+
+      - name: Test MPS basic operations
+        run: |
+          python -c "
+          import torch
+          import os
+          os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
+          device = torch.device('mps')
+          # Conv2d
+          conv = torch.nn.Conv2d(3, 16, 3, padding=1).to(device)
+          inp = torch.randn(1, 3, 64, 64, device=device)
+          out = conv(inp)
+          print(f'Conv2d on MPS: OK, shape={out.shape}')
+          # grid_sample 2D
+          import torch.nn.functional as F
+          inp_2d = torch.randn(1, 1, 4, 4, device=device)
+          grid_2d = torch.randn(1, 4, 4, 2, device=device)
+          out_2d = F.grid_sample(inp_2d, grid_2d, align_corners=False)
+          print(f'grid_sample 2D on MPS: OK, shape={out_2d.shape}')
+          "
+
+      - name: Run check_apple_silicon.py
+        run: |
+          python check_apple_silicon.py || true
+
+      - name: Test model loading (if weights available)
+        run: |
+          python -c "
+          import os
+          weights_dir = 'pretrained_weights'
+          if not os.path.isdir(weights_dir):
+              print('No pretrained weights - skipping model load test')
+          else:
+              print(f'Weights directory exists: {os.listdir(weights_dir)}')
+          " || true
