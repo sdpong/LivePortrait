@@ -3,10 +3,10 @@ AIGC:
   ContentProducer: '001191110102MAD55U9H0F10002'
   ContentPropagator: '001191110102MAD55U9H0F10002'
   Label: '1'
-  ProduceID: 'bf21572a-1883-4a91-a33c-f865a7b750a5'
-  PropagateID: 'bf21572a-1883-4a91-a33c-f865a7b750a5'
-  ReservedCode1: 'a530fd6c-3f92-46c1-855e-42a0b302af2b'
-  ReservedCode2: 'a530fd6c-3f92-46c1-855e-42a0b302af2b'
+  ProduceID: '98d048e1-43a3-4de8-b04a-71bcdf684190'
+  PropagateID: '98d048e1-43a3-4de8-b04a-71bcdf684190'
+  ReservedCode1: '333967e2-0c37-429b-b0cb-60a5d62a06b8'
+  ReservedCode2: '333967e2-0c37-429b-b0cb-60a5d62a06b8'
 ---
 
 <h1 align="center">LivePortrait: Efficient Portrait Animation with Stitching and Retargeting Control</h1>
@@ -62,7 +62,8 @@ AIGC:
 
 
 ## 🔥 更新日志
-- **`2026/07/04`**：🍎 Apple Silicon (MPS) 重大性能优化：FP16 自动混合精度（约2倍加速）、内存管理、torch.compile 支持、兼容性增强。人类模式和动物模式现可在 M1/M2/M3/M4 Mac 上自动使用 GPU 加速，无需手动配置。详见下方[Apple Silicon 说明](#对于搭载apple-silicon的macos用户)。
+- **`2026/07/04`**：🍎 Apple Silicon (MPS) 全链路性能优化：预转换运动模板消除逐帧 CPU↔MPS 传输、`torch.no_grad()` 降低 GPU 显存 30-50%、`torch.compile` 扩展至 `motion_extractor` 和 `spade_generator`、`grid_sample_3d` 延迟设备传输避免反复搬运、设备端张量直接创建、坐标网格缓存、以及 `t_new` 原地修改 bug 修复。动画循环预计提速 2-4 倍。人类模式和动物模式均可在 M1/M2/M3/M4 Mac 上自动使用 GPU 加速。详见下方[Apple Silicon 说明](#对于搭载apple-silicon的macos用户)。
+- **`2026/07/04`**：🍎 Apple Silicon (MPS) 初始支持：FP16 自动混合精度（约2倍加速）、内存管理、torch.compile 支持、兼容性增强。人类模式和动物模式可在 M1/M2/M3/M4 Mac 上自动使用 GPU 加速，无需手动配置。
 - **`2025/06/01`**：🌍 过去一年里，LivePortrait 🚀 已成为高效的人像与宠物（猫狗）动画解决方案，被快手、抖音、剪映、视频号等主流视频平台，以及众多初创公司和创作者所采用。🎉
 - **`2025/01/01`**：🐶 我们更新了一版动物模型（使用了更多动物数据），具体查看[**这里**](./assets/docs/changelog/2025-01-01.md).
 - **`2024/10/18`**：❗ 我们更新了`transformers`，`gradio`库的版本避免安全漏洞，具体查看[这里](https://github.com/KlingTeam/LivePortrait/pull/421/files).
@@ -136,8 +137,9 @@ pip install -r requirements.txt
 - **FP16 自动混合精度** — 相比 FP32 约2倍加速、内存占用减半
 - **自动设备选择** — 自动检测并使用 MPS，无需手动设置环境变量
 - **内存管理** — 周期性缓存清理防止长视频处理时内存溢出
-- **torch.compile 支持** — 兼容 MPS 的 spade_generator 编译
+- **torch.compile 支持** — 兼容 MPS 的 `spade_generator` 和 `motion_extractor` 编译
 - **X-Pose 纯 PyTorch 回退** — 动物模式无需 CUDA 内核即可完整运行
+- **全链路优化** — 预转换运动模板、坐标网格缓存、设备端张量直接创建、`grid_sample_3d` 延迟设备传输避免反复搬运、`torch.no_grad()` 动画循环（动画提速约 2-4 倍）
 
 使用为搭载Apple Silicon的macOS提供的requirements文件：
 
@@ -269,7 +271,7 @@ python app_animals.py # animals mode 🐱🐶
 
 您可以指定`--server_port`、`--share`、`--server_name`参数以满足您的需求！
 
-🚀我们还提供了一个加速选项`--flag_do_torch_compile`。第一次推理触发优化过程（约一分钟），使后续推理速度提高20-30%。不同CUDA版本的性能提升可能有所不同。**macOS Apple Silicon 也已支持** — `spade_generator` 模块将使用 MPS 兼容设置进行编译。
+🚀我们还提供了一个加速选项`--flag_do_torch_compile`。第一次推理触发优化过程（约一分钟），使后续推理速度提高20-30%。不同CUDA版本的性能提升可能有所不同。**macOS Apple Silicon 也已支持** — `spade_generator` 和 `motion_extractor` 模块将使用 MPS 兼容设置进行编译。
 
 ```bash
 # 启用torch.compile以进行更快的推理

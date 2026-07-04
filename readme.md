@@ -3,10 +3,10 @@ AIGC:
   ContentProducer: '001191110102MAD55U9H0F10002'
   ContentPropagator: '001191110102MAD55U9H0F10002'
   Label: '1'
-  ProduceID: 'e2943690-9333-434f-b2e2-b08f8d3fcc41'
-  PropagateID: 'e2943690-9333-434f-b2e2-b08f8d3fcc41'
-  ReservedCode1: '0ab9c731-c920-44d4-9433-eb1c23f51212'
-  ReservedCode2: '0ab9c731-c920-44d4-9433-eb1c23f51212'
+  ProduceID: '95dfdeab-6e34-4605-8548-e0a37e9ae45d'
+  PropagateID: '95dfdeab-6e34-4605-8548-e0a37e9ae45d'
+  ReservedCode1: '0ef48e3e-05b3-4513-ba01-06081a9b0831'
+  ReservedCode2: '0ef48e3e-05b3-4513-ba01-06081a9b0831'
 ---
 
 <h1 align="center">LivePortrait: Efficient Portrait Animation with Stitching and Retargeting Control</h1>
@@ -63,7 +63,8 @@ AIGC:
 
 
 ## 🔥 Updates
-- **`2026/07/04`**: 🍎 Major Apple Silicon (MPS) performance optimizations: FP16 autocast (~2x speedup), memory management, torch.compile support, and enhanced compatibility. Both human and animal modes now run with automatic GPU acceleration on M1/M2/M3/M4 Macs — no manual configuration needed. See [Apple Silicon notes](#for-macos--with-apple-silicon-users) below.
+- **`2026/07/04`**: 🍎 Apple Silicon (MPS) — full pipeline performance optimization: pre-converted motion templates eliminate per-frame CPU↔MPS transfers, `torch.no_grad()` reduces GPU memory by 30-50%, `torch.compile` now covers both `motion_extractor` and `spade_generator`, `grid_sample_3d` lazy device transfer avoids ping-pong, on-device tensor creation, cached coordinate grids, and a `t_new` in-place mutation bug fix. Estimated 2-4x speedup on the animation loop. Both human and animal modes run with automatic GPU acceleration on M1/M2/M3/M4 Macs. See [Apple Silicon notes](#for-macos--with-apple-silicon-users) below.
+- **`2026/07/04`**: 🍎 Apple Silicon (MPS) initial support: FP16 autocast (~2x speedup), memory management, torch.compile support, and enhanced compatibility. Both human and animal modes now run with automatic GPU acceleration on M1/M2/M3/M4 Macs — no manual configuration needed.
 - **`2025/06/01`**: 🌍 Over the past year, **LivePortrait** has 🚀 become an efficient portrait-animation (humans, cats and dogs) solution adopted by major video platforms—Kuaishou, Douyin, Jianying, WeChat Channels—as well as numerous startups and creators. 🎉
 - **`2025/01/01`**: 🐶 We updated a new version of the Animals model with more data, see [**here**](./assets/docs/changelog/2025-01-01.md).
 - **`2024/10/18`**: ❗ We have updated the versions of the `transformers` and `gradio` libraries to avoid security vulnerabilities. Details [here](https://github.com/KlingTeam/LivePortrait/pull/421/files).
@@ -138,8 +139,9 @@ Both Humans and Animals modes are fully supported on Apple Silicon (M1/M2/M3/M4)
 - **FP16 autocast** — ~2x speedup and ~2x memory reduction over FP32
 - **Automatic device selection** — MPS detected and used automatically, no manual env vars needed
 - **Memory management** — periodic cache cleanup prevents OOM on long video processing
-- **torch.compile support** — compatible MPS compilation for spade_generator
+- **torch.compile support** — compatible MPS compilation for `spade_generator` and `motion_extractor`
 - **X-Pose pure PyTorch fallback** — fully functional Animals mode without CUDA kernel
+- **Pipeline-level optimizations** — pre-converted motion templates, cached coordinate grids, on-device tensor creation, lazy MPS↔CPU transfer in `grid_sample_3d`, `torch.no_grad()` around animation loop (~2-4x animation speedup)
 
 Use the provided requirements file for macOS with Apple Silicon:
 ```bash
@@ -264,7 +266,7 @@ python app_animals.py # animals mode 🐱🐶
 
 You can specify the `--server_port`, `--share`, `--server_name` arguments to satisfy your needs!
 
-🚀 We also provide an acceleration option `--flag_do_torch_compile`. The first-time inference triggers an optimization process (about one minute), making subsequent inferences 20-30% faster. Performance gains may vary with different CUDA versions. **macOS with Apple Silicon is also supported** — the `spade_generator` module will be compiled with MPS-compatible settings.
+🚀 We also provide an acceleration option `--flag_do_torch_compile`. The first-time inference triggers an optimization process (about one minute), making subsequent inferences 20-30% faster. Performance gains may vary with different CUDA versions. **macOS with Apple Silicon is also supported** — the `spade_generator` and `motion_extractor` modules will be compiled with MPS-compatible settings.
 ```bash
 # enable torch.compile for faster inference
 python app.py --flag_do_torch_compile
