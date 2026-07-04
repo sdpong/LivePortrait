@@ -4,6 +4,7 @@ This code file mainly comes from https://github.com/dmlc/gluon-cv/blob/master/gl
 import os
 import os.path as osp
 import errno
+import importlib
 
 
 def get_model_dir(name, root='~/.insightface'):
@@ -44,7 +45,7 @@ def try_import(package, message=None):
 
     """
     try:
-        return __import__(package)
+        return importlib.import_module(package)
     except ImportError as e:
         if not message:
             raise e
@@ -114,36 +115,32 @@ def import_try_install(package, extern_url=None):
 
     """
     try:
-        return __import__(package)
+        return importlib.import_module(package)
     except ImportError:
-        try:
-            from pip import main as pipmain
-        except ImportError:
-            from pip._internal import main as pipmain
+        import subprocess
+        import sys
 
         # trying to install package
         url = package if extern_url is None else extern_url
-        pipmain(['install', '--user',
-                 url])  # will raise SystemExit Error if fails
+        subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--user', url])
 
         # trying to load again
         try:
-            return __import__(package)
+            return importlib.import_module(package)
         except ImportError:
-            import sys
             import site
             user_site = site.getusersitepackages()
             if user_site not in sys.path:
                 sys.path.append(user_site)
-            return __import__(package)
-    return __import__(package)
+            return importlib.import_module(package)
+    return importlib.import_module(package)
 
 
 def try_import_dali():
     """Try import NVIDIA DALI at runtime.
     """
     try:
-        dali = __import__('nvidia.dali', fromlist=['pipeline', 'ops', 'types'])
+        dali = importlib.import_module('nvidia.dali')
         dali.Pipeline = dali.pipeline.Pipeline
     except ImportError:
 

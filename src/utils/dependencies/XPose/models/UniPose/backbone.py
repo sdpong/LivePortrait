@@ -21,7 +21,6 @@ import torch.nn.functional as F
 import torchvision
 from torch import nn
 from torchvision.models._utils import IntermediateLayerGetter
-from typing import Dict, List
 
 from util.misc import NestedTensor, is_main_process
 
@@ -206,6 +205,6 @@ def build_backbone(args):
     model = Joiner(backbone, position_embedding)
     model.num_channels = bb_num_channels
     assert isinstance(
-        bb_num_channels, List
+        bb_num_channels, list
     ), "bb_num_channels is expected to be a List but {}".format(type(bb_num_channels))
     return model

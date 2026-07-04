@@ -4,7 +4,7 @@
 # @Time          : 2021-05-04
 # @Function      : 
 
-from __future__ import division
+
 import numpy as np
 import cv2
 import onnx

@@ -13,7 +13,7 @@ import time
 from collections import OrderedDict, defaultdict, deque
 import datetime
 import pickle
-from typing import Optional, List
+from typing import Optional
 
 import json, time
 import numpy as np

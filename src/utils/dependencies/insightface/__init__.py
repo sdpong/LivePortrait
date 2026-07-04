@@ -1,7 +1,7 @@
 # coding: utf-8
 # pylint: disable=wrong-import-position
 """InsightFace: A Face Analysis Toolkit."""
-from __future__ import absolute_import
+
 
 try:
     #import mxnet as mx

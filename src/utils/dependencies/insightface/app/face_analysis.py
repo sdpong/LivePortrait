@@ -5,7 +5,7 @@
 # @Function      :
 
 
-from __future__ import division
+
 
 import glob
 import os.path as osp
@@ -83,11 +83,11 @@ class FaceAnalysis:
         dimg = img.copy()
         for i in range(len(faces)):
             face = faces[i]
-            box = face.bbox.astype(np.int)
+            box = face.bbox.astype(int)
             color = (0, 0, 255)
             cv2.rectangle(dimg, (box[0], box[1]), (box[2], box[3]), color, 2)
             if face.kps is not None:
-                kps = face.kps.astype(np.int)
+                kps = face.kps.astype(int)
                 #print(landmark.shape)
                 for l in range(kps.shape[0]):
                     color = (0, 0, 255)

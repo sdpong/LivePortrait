@@ -10,7 +10,7 @@ Copy-paste from torch.nn.Transformer with modifications:
 """
 import torch
 from torch import Tensor, nn
-from typing import List, Optional
+from typing import Optional
 
 from .utils import  _get_activation_fn, _get_clones
 
