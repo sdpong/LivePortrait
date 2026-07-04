@@ -60,13 +60,20 @@ class LivePortraitWrapper(object):
             elif self.device == "mps":
                 # On MPS, use 'default' mode — 'max-autotune' attempts
                 # CUDA-specific optimizations (CUDA graphs, etc.) that fail.
-                # Only compile spade_generator; warping_module contains
-                # Conv3d + 3D grid_sample with MPS compatibility issues.
+                # motion_extractor is a pure 2D ConvNet (ConvNeXtV2) — safe to compile.
+                # spade_generator is also pure 2D — already compiled.
+                # warping_module contains Conv3d + 3D grid_sample with MPS
+                # compatibility issues — skip compilation for now.
                 try:
                     self.spade_generator = torch.compile(self.spade_generator, mode='default')
                     log("torch.compile enabled for spade_generator on MPS (mode='default')")
                 except Exception as e:
-                    log(f"torch.compile on MPS failed: {e}. Falling back to eager mode.")
+                    log(f"torch.compile spade_generator on MPS failed: {e}. Falling back to eager mode.")
+                try:
+                    self.motion_extractor = torch.compile(self.motion_extractor, mode='default')
+                    log("torch.compile enabled for motion_extractor on MPS (mode='default')")
+                except Exception as e:
+                    log(f"torch.compile motion_extractor on MPS failed: {e}. Falling back to eager mode.")
             else:
                 # CPU compilation for testing/debugging
                 try:
@@ -126,11 +133,18 @@ class LivePortraitWrapper(object):
     def extract_feature_3d(self, x: torch.Tensor) -> torch.Tensor:
         """ get the appearance feature of the image by F
         x: Bx3xHxW, normalized to 0~1
+        
+        Optimization: only calls .float() when half-precision autocast was
+        used (the output is float16). When not using half-precision, the
+        output is already float32 and .float() is a wasteful no-op copy
+        of an 8MB tensor (Bx32x16x64x64).
         """
         with torch.no_grad(), self.inference_ctx():
             feature_3d = self.appearance_feature_extractor(x)
 
-        return feature_3d.float()
+        if feature_3d.dtype != torch.float32:
+            feature_3d = feature_3d.float()
+        return feature_3d
 
     def get_kp_info(self, x: torch.Tensor, **kwargs) -> dict:
         """ get the implicit keypoint information
@@ -304,12 +318,15 @@ class LivePortraitWrapper(object):
     def parse_output(self, out: torch.Tensor) -> np.ndarray:
         """ construct the output as standard
         return: 1xHxWx3, uint8
+        
+        Optimization: uses torch.permute/clamp on the inference device instead
+        of numpy, avoiding a CPU round-trip for MPS/CUDA. The final .cpu().numpy()
+        only happens once at the end.
         """
-        out = np.transpose(out.data.cpu().numpy(), [0, 2, 3, 1])  # 1x3xHxW -> 1xHxWx3
-        out = np.clip(out, 0, 1)  # clip to 0~1
-        out = np.clip(out * 255, 0, 255).astype(np.uint8)  # 0~1 -> 0~255
-
-        return out
+        out = out.permute(0, 2, 3, 1)  # 1x3xHxW -> 1xHxWx3
+        out = out.clamp(0, 1)  # clip to 0~1
+        out = (out * 255).clamp(0, 255).to(torch.uint8)  # 0~1 -> 0~255
+        return out.cpu().numpy()
 
     def calc_ratio(self, lmk_lst):
         input_eye_ratio_lst = []
@@ -323,18 +340,18 @@ class LivePortraitWrapper(object):
 
     def calc_combined_eye_ratio(self, c_d_eyes_i, source_lmk):
         c_s_eyes = calc_eye_close_ratio(source_lmk[None])
-        c_s_eyes_tensor = torch.from_numpy(c_s_eyes).float().to(self.device)
-        c_d_eyes_i_tensor = torch.Tensor([c_d_eyes_i[0][0]]).reshape(1, 1).to(self.device)
+        c_s_eyes_tensor = torch.as_tensor(c_s_eyes, dtype=torch.float32, device=self.device)
+        c_d_eyes_i_tensor = torch.tensor([[c_d_eyes_i[0][0]]], dtype=torch.float32, device=self.device)
         # [c_s,eyes, c_d,eyes,i]
         combined_eye_ratio_tensor = torch.cat([c_s_eyes_tensor, c_d_eyes_i_tensor], dim=1)
         return combined_eye_ratio_tensor
 
     def calc_combined_lip_ratio(self, c_d_lip_i, source_lmk):
         c_s_lip = calc_lip_close_ratio(source_lmk[None])
-        c_s_lip_tensor = torch.from_numpy(c_s_lip).float().to(self.device)
-        c_d_lip_i_tensor = torch.Tensor([c_d_lip_i[0]]).to(self.device).reshape(1, 1) # 1x1
+        c_s_lip_tensor = torch.as_tensor(c_s_lip, dtype=torch.float32, device=self.device)
+        c_d_lip_i_tensor = torch.tensor([c_d_lip_i[0]], dtype=torch.float32, device=self.device).reshape(1, 1)  # 1x1
         # [c_s,lip, c_d,lip,i]
-        combined_lip_ratio_tensor = torch.cat([c_s_lip_tensor, c_d_lip_i_tensor], dim=1) # 1x2
+        combined_lip_ratio_tensor = torch.cat([c_s_lip_tensor, c_d_lip_i_tensor], dim=1)  # 1x2
         return combined_lip_ratio_tensor
 
 
@@ -381,7 +398,12 @@ class LivePortraitWrapperAnimal(LivePortraitWrapper):
                     self.spade_generator = torch.compile(self.spade_generator, mode='default')
                     log("torch.compile enabled for spade_generator on MPS (mode='default')")
                 except Exception as e:
-                    log(f"torch.compile on MPS failed: {e}. Falling back to eager mode.")
+                    log(f"torch.compile spade_generator on MPS failed: {e}. Falling back to eager mode.")
+                try:
+                    self.motion_extractor = torch.compile(self.motion_extractor, mode='default')
+                    log("torch.compile enabled for motion_extractor on MPS (mode='default')")
+                except Exception as e:
+                    log(f"torch.compile motion_extractor on MPS failed: {e}. Falling back to eager mode.")
             else:
                 try:
                     self.spade_generator = torch.compile(self.spade_generator, mode='default')

@@ -99,12 +99,61 @@ def squeeze_tensor_to_numpy(tensor):
 
 
 def dct2device(dct: dict, device):
+    """Transfer dict values to the specified device, with zero-copy when possible.
+    
+    Optimizations over the original:
+    - Skips tensors already on the target device (avoids redundant D2D copy)
+    - Uses torch.as_tensor() instead of torch.tensor() for numpy arrays,
+      which avoids an unnecessary copy when the array is already C-contiguous
+      and float32 (zero-copy from numpy to torch)
+    """
     for key in dct:
-        if isinstance(dct[key], torch.Tensor):
-            dct[key] = dct[key].to(device)
+        val = dct[key]
+        if isinstance(val, torch.Tensor):
+            target_type = device if isinstance(device, str) else device.type
+            if val.device.type != target_type:
+                dct[key] = val.to(device)
+            # else: already on target device, skip transfer
+        elif isinstance(val, np.ndarray):
+            # torch.as_tensor avoids a copy when the array is C-contiguous
+            # and the dtype matches; much faster than torch.tensor()
+            dct[key] = torch.as_tensor(val, dtype=torch.float32).to(device)
         else:
-            dct[key] = torch.tensor(dct[key]).to(device)
+            dct[key] = torch.tensor(val, dtype=torch.float32, device=device)
     return dct
+
+
+def template_to_numpy(template_dct: dict) -> dict:
+    """Convert a motion template dict's tensor values to numpy for serialization.
+    
+    This is needed before pickling a template that contains GPU tensors,
+    since PyTorch tensors on MPS/CUDA cannot be reliably pickled.
+    After calling this, the template is safe for pickle.dump().
+    """
+    out = {}
+    for k, v in template_dct.items():
+        if k == 'motion':
+            out['motion'] = []
+            for item in v:
+                item_np = {}
+                for ik, iv in item.items():
+                    if isinstance(iv, torch.Tensor):
+                        item_np[ik] = iv.detach().cpu().numpy().astype(np.float32)
+                    else:
+                        item_np[ik] = iv
+                out['motion'].append(item_np)
+        elif k == 'c_eyes_lst' or k == 'c_lip_lst':
+            out[k] = []
+            for item in v:
+                if isinstance(item, torch.Tensor):
+                    out[k].append(item.detach().cpu().numpy().astype(np.float32))
+                elif isinstance(item, np.ndarray):
+                    out[k].append(item.astype(np.float32))
+                else:
+                    out[k].append(np.array(item, dtype=np.float32))
+        else:
+            out[k] = v
+    return out
 
 
 def concat_feat(kp_source: torch.Tensor, kp_driving: torch.Tensor) -> torch.Tensor:

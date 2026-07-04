@@ -270,193 +270,203 @@ class LivePortraitPipeline(object):
             if inf_cfg.flag_pasteback and inf_cfg.flag_do_crop and inf_cfg.flag_stitching:
                 mask_ori_float = prepare_paste_back(inf_cfg.mask_crop, crop_info['M_c2o'], dsize=(source_rgb_lst[0].shape[1], source_rgb_lst[0].shape[0]))
 
+        ######## pre-convert motion templates to device ########
+        # Optimization: batch-convert all numpy arrays in the motion template to
+        # device tensors ONCE before the animation loop, instead of calling
+        # dct2device() per-frame. This eliminates ~N*6 numpy→tensor→device
+        # transfers per template (where N = n_frames, 6 = keys per motion dict),
+        # which is especially costly on MPS where each transfer crosses the
+        # CPU↔MPS boundary.
+        driving_motion_on_device = [dct2device(m, device) for m in driving_template_dct['motion']]
+        if flag_is_source_video:
+            source_motion_on_device = [dct2device(m, device) for m in source_template_dct['motion']]
+
         ######## animate ########
         if flag_is_driving_video or (flag_is_source_video and not flag_is_driving_video):
             log(f"The animated video consists of {n_frames} frames.")
         else:
             log(f"The output of image-driven portrait animation is an image.")
-        for i in track(range(n_frames), description='🚀Animating...', total=n_frames):
-            if flag_is_source_video:  # source video
-                x_s_info = source_template_dct['motion'][i]
-                x_s_info = dct2device(x_s_info, device)
+        with torch.no_grad():
+            for i in track(range(n_frames), description='🚀Animating...', total=n_frames):
+                if flag_is_source_video:  # source video
+                    x_s_info = source_motion_on_device[i]
 
-                source_lmk = source_lmk_crop_lst[i]
-                img_crop_256x256 = img_crop_256x256_lst[i]
-                I_s = I_s_lst[i]
-                f_s = self.live_portrait_wrapper.extract_feature_3d(I_s)
+                    source_lmk = source_lmk_crop_lst[i]
+                    img_crop_256x256 = img_crop_256x256_lst[i]
+                    I_s = I_s_lst[i]
+                    f_s = self.live_portrait_wrapper.extract_feature_3d(I_s)
 
-                x_c_s = x_s_info['kp']
-                R_s = x_s_info['R']
-                x_s =x_s_info['x_s']
+                    x_c_s = x_s_info['kp']
+                    R_s = x_s_info['R']
+                    x_s = x_s_info['x_s']
 
-                # let lip-open scalar to be 0 at first if the input is a video
-                if flag_normalize_lip and inf_cfg.flag_relative_motion and source_lmk is not None:
-                    c_d_lip_before_animation = [0.]
-                    combined_lip_ratio_tensor_before_animation = self.live_portrait_wrapper.calc_combined_lip_ratio(c_d_lip_before_animation, source_lmk)
-                    if combined_lip_ratio_tensor_before_animation[0][0] >= inf_cfg.lip_normalize_threshold:
-                        lip_delta_before_animation = self.live_portrait_wrapper.retarget_lip(x_s, combined_lip_ratio_tensor_before_animation)
-                    else:
-                        lip_delta_before_animation = None
+                    # let lip-open scalar to be 0 at first if the input is a video
+                    if flag_normalize_lip and inf_cfg.flag_relative_motion and source_lmk is not None:
+                        c_d_lip_before_animation = [0.]
+                        combined_lip_ratio_tensor_before_animation = self.live_portrait_wrapper.calc_combined_lip_ratio(c_d_lip_before_animation, source_lmk)
+                        if combined_lip_ratio_tensor_before_animation[0][0] >= inf_cfg.lip_normalize_threshold:
+                            lip_delta_before_animation = self.live_portrait_wrapper.retarget_lip(x_s, combined_lip_ratio_tensor_before_animation)
+                        else:
+                            lip_delta_before_animation = None
 
-                # let eye-open scalar to be the same as the first frame if the latter is eye-open state
-                if flag_source_video_eye_retargeting and source_lmk is not None:
-                    if i == 0:
-                        combined_eye_ratio_tensor_frame_zero = c_s_eyes_lst[0]
-                        c_d_eye_before_animation_frame_zero = [[combined_eye_ratio_tensor_frame_zero[0][:2].mean()]]
-                        if c_d_eye_before_animation_frame_zero[0][0] < inf_cfg.source_video_eye_retargeting_threshold:
-                            c_d_eye_before_animation_frame_zero = [[0.39]]
-                    combined_eye_ratio_tensor_before_animation = self.live_portrait_wrapper.calc_combined_eye_ratio(c_d_eye_before_animation_frame_zero, source_lmk)
-                    eye_delta_before_animation = self.live_portrait_wrapper.retarget_eye(x_s, combined_eye_ratio_tensor_before_animation)
+                    # let eye-open scalar to be the same as the first frame if the latter is eye-open state
+                    if flag_source_video_eye_retargeting and source_lmk is not None:
+                        if i == 0:
+                            combined_eye_ratio_tensor_frame_zero = c_s_eyes_lst[0]
+                            c_d_eye_before_animation_frame_zero = [[combined_eye_ratio_tensor_frame_zero[0][:2].mean()]]
+                            if c_d_eye_before_animation_frame_zero[0][0] < inf_cfg.source_video_eye_retargeting_threshold:
+                                c_d_eye_before_animation_frame_zero = [[0.39]]
+                        combined_eye_ratio_tensor_before_animation = self.live_portrait_wrapper.calc_combined_eye_ratio(c_d_eye_before_animation_frame_zero, source_lmk)
+                        eye_delta_before_animation = self.live_portrait_wrapper.retarget_eye(x_s, combined_eye_ratio_tensor_before_animation)
 
-                if inf_cfg.flag_pasteback and inf_cfg.flag_do_crop and inf_cfg.flag_stitching:  # prepare for paste back
-                    mask_ori_float = prepare_paste_back(inf_cfg.mask_crop, source_M_c2o_lst[i], dsize=(source_rgb_lst[i].shape[1], source_rgb_lst[i].shape[0]))
-            if flag_is_source_video and not flag_is_driving_video:
-                x_d_i_info = driving_template_dct['motion'][0]
-            else:
-                x_d_i_info = driving_template_dct['motion'][i]
-            x_d_i_info = dct2device(x_d_i_info, device)
-            R_d_i = x_d_i_info['R'] if 'R' in x_d_i_info.keys() else x_d_i_info['R_d']  # compatible with previous keys
-
-            if i == 0:  # cache the first frame
-                R_d_0 = R_d_i
-                x_d_0_info = x_d_i_info.copy()
-
-            delta_new = x_s_info['exp'].clone()
-            if inf_cfg.flag_relative_motion:
-                if inf_cfg.animation_region == "all" or inf_cfg.animation_region == "pose":
-                    R_new = x_d_r_lst_smooth[i] if flag_is_source_video else (R_d_i @ R_d_0.permute(0, 2, 1)) @ R_s
+                    if inf_cfg.flag_pasteback and inf_cfg.flag_do_crop and inf_cfg.flag_stitching:  # prepare for paste back
+                        mask_ori_float = prepare_paste_back(inf_cfg.mask_crop, source_M_c2o_lst[i], dsize=(source_rgb_lst[i].shape[1], source_rgb_lst[i].shape[0]))
+                if flag_is_source_video and not flag_is_driving_video:
+                    x_d_i_info = driving_motion_on_device[0]
                 else:
-                    R_new = R_s
-                if inf_cfg.animation_region == "all" or inf_cfg.animation_region == "exp":
-                    if flag_is_source_video:
+                    x_d_i_info = driving_motion_on_device[i]
+                R_d_i = x_d_i_info['R'] if 'R' in x_d_i_info.keys() else x_d_i_info['R_d']  # compatible with previous keys
+
+                if i == 0:  # cache the first frame
+                    R_d_0 = R_d_i
+                    x_d_0_info = x_d_i_info.copy()
+
+                delta_new = x_s_info['exp'].clone()
+                if inf_cfg.flag_relative_motion:
+                    if inf_cfg.animation_region == "all" or inf_cfg.animation_region == "pose":
+                        R_new = x_d_r_lst_smooth[i] if flag_is_source_video else (R_d_i @ R_d_0.permute(0, 2, 1)) @ R_s
+                    else:
+                        R_new = R_s
+                    if inf_cfg.animation_region == "all" or inf_cfg.animation_region == "exp":
+                        if flag_is_source_video:
+                            for idx in [1,2,6,11,12,13,14,15,16,17,18,19,20]:
+                                delta_new[:, idx, :] = x_d_exp_lst_smooth[i][idx, :]
+                            delta_new[:, 3:5, 1] = x_d_exp_lst_smooth[i][3:5, 1]
+                            delta_new[:, 5, 2] = x_d_exp_lst_smooth[i][5, 2]
+                            delta_new[:, 8, 2] = x_d_exp_lst_smooth[i][8, 2]
+                            delta_new[:, 9, 1:] = x_d_exp_lst_smooth[i][9, 1:]
+                        else:
+                            if flag_is_driving_video:
+                                delta_new = x_s_info['exp'] + (x_d_i_info['exp'] - x_d_0_info['exp'])
+                            else:
+                                delta_new = x_s_info['exp'] + (x_d_i_info['exp'] - torch.from_numpy(inf_cfg.lip_array).to(dtype=torch.float32, device=device))
+                    elif inf_cfg.animation_region == "lip":
+                        for lip_idx in [6, 12, 14, 17, 19, 20]:
+                            if flag_is_source_video:
+                                delta_new[:, lip_idx, :] = x_d_exp_lst_smooth[i][lip_idx, :]
+                            elif flag_is_driving_video:
+                                delta_new[:, lip_idx, :] = (x_s_info['exp'] + (x_d_i_info['exp'] - x_d_0_info['exp']))[:, lip_idx, :]
+                            else:
+                                delta_new[:, lip_idx, :] = (x_s_info['exp'] + (x_d_i_info['exp'] - torch.from_numpy(inf_cfg.lip_array).to(dtype=torch.float32, device=device)))[:, lip_idx, :]
+                    elif inf_cfg.animation_region == "eyes":
+                        for eyes_idx in [11, 13, 15, 16, 18]:
+                            if flag_is_source_video:
+                                delta_new[:, eyes_idx, :] = x_d_exp_lst_smooth[i][eyes_idx, :]
+                            elif flag_is_driving_video:
+                                delta_new[:, eyes_idx, :] = (x_s_info['exp'] + (x_d_i_info['exp'] - x_d_0_info['exp']))[:, eyes_idx, :]
+                            else:
+                                delta_new[:, eyes_idx, :] = (x_s_info['exp'] + (x_d_i_info['exp'] - 0))[:, eyes_idx, :]
+                    if inf_cfg.animation_region == "all":
+                        scale_new = x_s_info['scale'] if flag_is_source_video else x_s_info['scale'] * (x_d_i_info['scale'] / x_d_0_info['scale'])
+                    else:
+                        scale_new = x_s_info['scale']
+                    if inf_cfg.animation_region == "all" or inf_cfg.animation_region == "pose":
+                        t_new = x_s_info['t'].clone() if flag_is_source_video else x_s_info['t'] + (x_d_i_info['t'] - x_d_0_info['t'])
+                    else:
+                        t_new = x_s_info['t'].clone()
+                else:
+                    if inf_cfg.animation_region == "all" or inf_cfg.animation_region == "pose":
+                        R_new = x_d_r_lst_smooth[i] if flag_is_source_video else R_d_i
+                    else:
+                        R_new = R_s
+                    if inf_cfg.animation_region == "all" or inf_cfg.animation_region == "exp":
                         for idx in [1,2,6,11,12,13,14,15,16,17,18,19,20]:
-                            delta_new[:, idx, :] = x_d_exp_lst_smooth[i][idx, :]
-                        delta_new[:, 3:5, 1] = x_d_exp_lst_smooth[i][3:5, 1]
-                        delta_new[:, 5, 2] = x_d_exp_lst_smooth[i][5, 2]
-                        delta_new[:, 8, 2] = x_d_exp_lst_smooth[i][8, 2]
-                        delta_new[:, 9, 1:] = x_d_exp_lst_smooth[i][9, 1:]
-                    else:
-                        if flag_is_driving_video:
-                            delta_new = x_s_info['exp'] + (x_d_i_info['exp'] - x_d_0_info['exp'])
-                        else:
-                            delta_new = x_s_info['exp'] + (x_d_i_info['exp'] - torch.from_numpy(inf_cfg.lip_array).to(dtype=torch.float32, device=device))
-                elif inf_cfg.animation_region == "lip":
-                    for lip_idx in [6, 12, 14, 17, 19, 20]:
-                        if flag_is_source_video:
-                            delta_new[:, lip_idx, :] = x_d_exp_lst_smooth[i][lip_idx, :]
-                        elif flag_is_driving_video:
-                            delta_new[:, lip_idx, :] = (x_s_info['exp'] + (x_d_i_info['exp'] - x_d_0_info['exp']))[:, lip_idx, :]
-                        else:
-                            delta_new[:, lip_idx, :] = (x_s_info['exp'] + (x_d_i_info['exp'] - torch.from_numpy(inf_cfg.lip_array).to(dtype=torch.float32, device=device)))[:, lip_idx, :]
-                elif inf_cfg.animation_region == "eyes":
-                    for eyes_idx in [11, 13, 15, 16, 18]:
-                        if flag_is_source_video:
-                            delta_new[:, eyes_idx, :] = x_d_exp_lst_smooth[i][eyes_idx, :]
-                        elif flag_is_driving_video:
-                            delta_new[:, eyes_idx, :] = (x_s_info['exp'] + (x_d_i_info['exp'] - x_d_0_info['exp']))[:, eyes_idx, :]
-                        else:
-                            delta_new[:, eyes_idx, :] = (x_s_info['exp'] + (x_d_i_info['exp'] - 0))[:, eyes_idx, :]
-                if inf_cfg.animation_region == "all":
-                    scale_new = x_s_info['scale'] if flag_is_source_video else x_s_info['scale'] * (x_d_i_info['scale'] / x_d_0_info['scale'])
-                else:
+                            delta_new[:, idx, :] = x_d_exp_lst_smooth[i][idx, :] if flag_is_source_video else x_d_i_info['exp'][:, idx, :]
+                        delta_new[:, 3:5, 1] = x_d_exp_lst_smooth[i][3:5, 1] if flag_is_source_video else x_d_i_info['exp'][:, 3:5, 1]
+                        delta_new[:, 5, 2] = x_d_exp_lst_smooth[i][5, 2] if flag_is_source_video else x_d_i_info['exp'][:, 5, 2]
+                        delta_new[:, 8, 2] = x_d_exp_lst_smooth[i][8, 2] if flag_is_source_video else x_d_i_info['exp'][:, 8, 2]
+                        delta_new[:, 9, 1:] = x_d_exp_lst_smooth[i][9, 1:] if flag_is_source_video else x_d_i_info['exp'][:, 9, 1:]
+                    elif inf_cfg.animation_region == "lip":
+                        for lip_idx in [6, 12, 14, 17, 19, 20]:
+                            delta_new[:, lip_idx, :] = x_d_exp_lst_smooth[i][lip_idx, :] if flag_is_source_video else x_d_i_info['exp'][:, lip_idx, :]
+                    elif inf_cfg.animation_region == "eyes":
+                        for eyes_idx in [11, 13, 15, 16, 18]:
+                            delta_new[:, eyes_idx, :] = x_d_exp_lst_smooth[i][eyes_idx, :] if flag_is_source_video else x_d_i_info['exp'][:, eyes_idx, :]
                     scale_new = x_s_info['scale']
-                if inf_cfg.animation_region == "all" or inf_cfg.animation_region == "pose":
-                    t_new = x_s_info['t'] if flag_is_source_video else x_s_info['t'] + (x_d_i_info['t'] - x_d_0_info['t'])
+                    if inf_cfg.animation_region == "all" or inf_cfg.animation_region == "pose":
+                        t_new = x_d_i_info['t'].clone()
+                    else:
+                        t_new = x_s_info['t'].clone()
+
+                t_new[..., 2].fill_(0)  # zero tz
+                x_d_i_new = scale_new * (x_c_s @ R_new + delta_new) + t_new
+
+                if inf_cfg.flag_relative_motion and inf_cfg.driving_option == "expression-friendly" and not flag_is_source_video and flag_is_driving_video:
+                    if i == 0:
+                        x_d_0_new = x_d_i_new
+                        motion_multiplier = calc_motion_multiplier(x_s, x_d_0_new)
+                        # motion_multiplier *= inf_cfg.driving_multiplier
+                    x_d_diff = (x_d_i_new - x_d_0_new) * motion_multiplier
+                    x_d_i_new = x_d_diff + x_s
+
+                # Algorithm 1:
+                if not inf_cfg.flag_stitching and not inf_cfg.flag_eye_retargeting and not inf_cfg.flag_lip_retargeting:
+                    # without stitching or retargeting
+                    if flag_normalize_lip and lip_delta_before_animation is not None:
+                        x_d_i_new += lip_delta_before_animation
+                    if flag_source_video_eye_retargeting and eye_delta_before_animation is not None:
+                        x_d_i_new += eye_delta_before_animation
+                    else:
+                        pass
+                elif inf_cfg.flag_stitching and not inf_cfg.flag_eye_retargeting and not inf_cfg.flag_lip_retargeting:
+                    # with stitching and without retargeting
+                    if flag_normalize_lip and lip_delta_before_animation is not None:
+                        x_d_i_new = self.live_portrait_wrapper.stitching(x_s, x_d_i_new) + lip_delta_before_animation
+                    else:
+                        x_d_i_new = self.live_portrait_wrapper.stitching(x_s, x_d_i_new)
+                    if flag_source_video_eye_retargeting and eye_delta_before_animation is not None:
+                        x_d_i_new += eye_delta_before_animation
                 else:
-                    t_new = x_s_info['t']
-            else:
-                if inf_cfg.animation_region == "all" or inf_cfg.animation_region == "pose":
-                    R_new = x_d_r_lst_smooth[i] if flag_is_source_video else R_d_i
-                else:
-                    R_new = R_s
-                if inf_cfg.animation_region == "all" or inf_cfg.animation_region == "exp":
-                    for idx in [1,2,6,11,12,13,14,15,16,17,18,19,20]:
-                        delta_new[:, idx, :] = x_d_exp_lst_smooth[i][idx, :] if flag_is_source_video else x_d_i_info['exp'][:, idx, :]
-                    delta_new[:, 3:5, 1] = x_d_exp_lst_smooth[i][3:5, 1] if flag_is_source_video else x_d_i_info['exp'][:, 3:5, 1]
-                    delta_new[:, 5, 2] = x_d_exp_lst_smooth[i][5, 2] if flag_is_source_video else x_d_i_info['exp'][:, 5, 2]
-                    delta_new[:, 8, 2] = x_d_exp_lst_smooth[i][8, 2] if flag_is_source_video else x_d_i_info['exp'][:, 8, 2]
-                    delta_new[:, 9, 1:] = x_d_exp_lst_smooth[i][9, 1:] if flag_is_source_video else x_d_i_info['exp'][:, 9, 1:]
-                elif inf_cfg.animation_region == "lip":
-                    for lip_idx in [6, 12, 14, 17, 19, 20]:
-                        delta_new[:, lip_idx, :] = x_d_exp_lst_smooth[i][lip_idx, :] if flag_is_source_video else x_d_i_info['exp'][:, lip_idx, :]
-                elif inf_cfg.animation_region == "eyes":
-                    for eyes_idx in [11, 13, 15, 16, 18]:
-                        delta_new[:, eyes_idx, :] = x_d_exp_lst_smooth[i][eyes_idx, :] if flag_is_source_video else x_d_i_info['exp'][:, eyes_idx, :]
-                scale_new = x_s_info['scale']
-                if inf_cfg.animation_region == "all" or inf_cfg.animation_region == "pose":
-                    t_new = x_d_i_info['t']
-                else:
-                    t_new = x_s_info['t']
+                    eyes_delta, lip_delta = None, None
+                    if inf_cfg.flag_eye_retargeting and source_lmk is not None:
+                        c_d_eyes_i = c_d_eyes_lst[i]
+                        combined_eye_ratio_tensor = self.live_portrait_wrapper.calc_combined_eye_ratio(c_d_eyes_i, source_lmk)
+                        # ∆_eyes,i = R_eyes(x_s; c_s,eyes, c_d,eyes,i)
+                        eyes_delta = self.live_portrait_wrapper.retarget_eye(x_s, combined_eye_ratio_tensor)
+                    if inf_cfg.flag_lip_retargeting and source_lmk is not None:
+                        c_d_lip_i = c_d_lip_lst[i]
+                        combined_lip_ratio_tensor = self.live_portrait_wrapper.calc_combined_lip_ratio(c_d_lip_i, source_lmk)
+                        # ∆_lip,i = R_lip(x_s; c_s,lip, c_d,lip,i)
+                        lip_delta = self.live_portrait_wrapper.retarget_lip(x_s, combined_lip_ratio_tensor)
 
-            t_new[..., 2].fill_(0)  # zero tz
-            x_d_i_new = scale_new * (x_c_s @ R_new + delta_new) + t_new
+                    if inf_cfg.flag_relative_motion:  # use x_s
+                        x_d_i_new = x_s + \
+                            (eyes_delta if eyes_delta is not None else 0) + \
+                            (lip_delta if lip_delta is not None else 0)
+                    else:  # use x_d,i
+                        x_d_i_new = x_d_i_new + \
+                            (eyes_delta if eyes_delta is not None else 0) + \
+                            (lip_delta if lip_delta is not None else 0)
 
-            if inf_cfg.flag_relative_motion and inf_cfg.driving_option == "expression-friendly" and not flag_is_source_video and flag_is_driving_video:
-                if i == 0:
-                    x_d_0_new = x_d_i_new
-                    motion_multiplier = calc_motion_multiplier(x_s, x_d_0_new)
-                    # motion_multiplier *= inf_cfg.driving_multiplier
-                x_d_diff = (x_d_i_new - x_d_0_new) * motion_multiplier
-                x_d_i_new = x_d_diff + x_s
+                    if inf_cfg.flag_stitching:
+                        x_d_i_new = self.live_portrait_wrapper.stitching(x_s, x_d_i_new)
 
-            # Algorithm 1:
-            if not inf_cfg.flag_stitching and not inf_cfg.flag_eye_retargeting and not inf_cfg.flag_lip_retargeting:
-                # without stitching or retargeting
-                if flag_normalize_lip and lip_delta_before_animation is not None:
-                    x_d_i_new += lip_delta_before_animation
-                if flag_source_video_eye_retargeting and eye_delta_before_animation is not None:
-                    x_d_i_new += eye_delta_before_animation
-                else:
-                    pass
-            elif inf_cfg.flag_stitching and not inf_cfg.flag_eye_retargeting and not inf_cfg.flag_lip_retargeting:
-                # with stitching and without retargeting
-                if flag_normalize_lip and lip_delta_before_animation is not None:
-                    x_d_i_new = self.live_portrait_wrapper.stitching(x_s, x_d_i_new) + lip_delta_before_animation
-                else:
-                    x_d_i_new = self.live_portrait_wrapper.stitching(x_s, x_d_i_new)
-                if flag_source_video_eye_retargeting and eye_delta_before_animation is not None:
-                    x_d_i_new += eye_delta_before_animation
-            else:
-                eyes_delta, lip_delta = None, None
-                if inf_cfg.flag_eye_retargeting and source_lmk is not None:
-                    c_d_eyes_i = c_d_eyes_lst[i]
-                    combined_eye_ratio_tensor = self.live_portrait_wrapper.calc_combined_eye_ratio(c_d_eyes_i, source_lmk)
-                    # ∆_eyes,i = R_eyes(x_s; c_s,eyes, c_d,eyes,i)
-                    eyes_delta = self.live_portrait_wrapper.retarget_eye(x_s, combined_eye_ratio_tensor)
-                if inf_cfg.flag_lip_retargeting and source_lmk is not None:
-                    c_d_lip_i = c_d_lip_lst[i]
-                    combined_lip_ratio_tensor = self.live_portrait_wrapper.calc_combined_lip_ratio(c_d_lip_i, source_lmk)
-                    # ∆_lip,i = R_lip(x_s; c_s,lip, c_d,lip,i)
-                    lip_delta = self.live_portrait_wrapper.retarget_lip(x_s, combined_lip_ratio_tensor)
+                x_d_i_new = x_s + (x_d_i_new - x_s) * inf_cfg.driving_multiplier
+                out = self.live_portrait_wrapper.warp_decode(f_s, x_s, x_d_i_new)
+                I_p_i = self.live_portrait_wrapper.parse_output(out['out'])[0]
+                I_p_lst.append(I_p_i)
 
-                if inf_cfg.flag_relative_motion:  # use x_s
-                    x_d_i_new = x_s + \
-                        (eyes_delta if eyes_delta is not None else 0) + \
-                        (lip_delta if lip_delta is not None else 0)
-                else:  # use x_d,i
-                    x_d_i_new = x_d_i_new + \
-                        (eyes_delta if eyes_delta is not None else 0) + \
-                        (lip_delta if lip_delta is not None else 0)
+                # Free MPS GPU memory periodically to prevent OOM on long videos
+                if device == "mps" and i % 10 == 9:
+                    empty_cache(device)
 
-                if inf_cfg.flag_stitching:
-                    x_d_i_new = self.live_portrait_wrapper.stitching(x_s, x_d_i_new)
-
-            x_d_i_new = x_s + (x_d_i_new - x_s) * inf_cfg.driving_multiplier
-            out = self.live_portrait_wrapper.warp_decode(f_s, x_s, x_d_i_new)
-            I_p_i = self.live_portrait_wrapper.parse_output(out['out'])[0]
-            I_p_lst.append(I_p_i)
-
-            # Free MPS GPU memory periodically to prevent OOM on long videos
-            if device == "mps" and i % 10 == 9:
-                empty_cache(device)
-
-            if inf_cfg.flag_pasteback and inf_cfg.flag_do_crop and inf_cfg.flag_stitching:
-                # TODO: the paste back procedure is slow, considering optimize it using multi-threading or GPU
-                if flag_is_source_video:
-                    I_p_pstbk = paste_back(I_p_i, source_M_c2o_lst[i], source_rgb_lst[i], mask_ori_float)
-                else:
-                    I_p_pstbk = paste_back(I_p_i, crop_info['M_c2o'], source_rgb_lst[0], mask_ori_float)
-                I_p_pstbk_lst.append(I_p_pstbk)
+                if inf_cfg.flag_pasteback and inf_cfg.flag_do_crop and inf_cfg.flag_stitching:
+                    # TODO: the paste back procedure is slow, considering optimize it using multi-threading or GPU
+                    if flag_is_source_video:
+                        I_p_pstbk = paste_back(I_p_i, source_M_c2o_lst[i], source_rgb_lst[i], mask_ori_float)
+                    else:
+                        I_p_pstbk = paste_back(I_p_i, crop_info['M_c2o'], source_rgb_lst[0], mask_ori_float)
+                    I_p_pstbk_lst.append(I_p_pstbk)
 
         mkdir(args.output_dir)
         wfp_concat = None

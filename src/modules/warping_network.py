@@ -45,6 +45,8 @@ class WarpingNetwork(nn.Module):
         self.estimate_occlusion_map = estimate_occlusion_map
 
     def deform_input(self, inp, deformation):
+        # On MPS, the next operations (view + Conv2d) run natively on MPS,
+        # so we do want to return the result to MPS immediately.
         return grid_sample_3d_fallback(inp, deformation, align_corners=False)
 
     def forward(self, feature_3d, kp_driving, kp_source):

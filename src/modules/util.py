@@ -38,23 +38,38 @@ def kp2gaussian(kp, spatial_size, kp_variance):
     return out
 
 
+# Global cache for coordinate grids. Key: (spatial_size, device, dtype)
+_coordinate_grid_cache = {}
+
+
 def make_coordinate_grid(spatial_size, ref, **kwargs):
+    """Create a 3D coordinate grid tensor.
+    
+    Optimization: caches the grid by (spatial_size, device, dtype) to avoid
+    re-creating and transferring the same grid to GPU every frame. The grid
+    is constant for a given spatial size, so it only needs to be created once.
+    
+    Uses torch.meshgrid with indexing='ij' to avoid the deprecation warning.
+    """
+    cache_key = (spatial_size, ref.device, ref.dtype)
+    if cache_key in _coordinate_grid_cache:
+        return _coordinate_grid_cache[cache_key]
+    
     d, h, w = spatial_size
-    x = torch.arange(w).type(ref.dtype).to(ref.device)
-    y = torch.arange(h).type(ref.dtype).to(ref.device)
-    z = torch.arange(d).type(ref.dtype).to(ref.device)
+    x = torch.arange(w, dtype=ref.dtype, device=ref.device)
+    y = torch.arange(h, dtype=ref.dtype, device=ref.device)
+    z = torch.arange(d, dtype=ref.dtype, device=ref.device)
 
     # NOTE: must be right-down-in
     x = (2 * (x / (w - 1)) - 1)  # the x axis faces to the right
     y = (2 * (y / (h - 1)) - 1)  # the y axis faces to the bottom
     z = (2 * (z / (d - 1)) - 1)  # the z axis faces to the inner
 
-    yy = y.view(1, -1, 1).repeat(d, 1, w)
-    xx = x.view(1, 1, -1).repeat(d, h, 1)
-    zz = z.view(-1, 1, 1).repeat(1, h, w)
+    zz, yy, xx = torch.meshgrid(z, y, x, indexing='ij')
 
-    meshed = torch.cat([xx.unsqueeze_(3), yy.unsqueeze_(3), zz.unsqueeze_(3)], 3)
+    meshed = torch.stack([xx, yy, zz], dim=-1)
 
+    _coordinate_grid_cache[cache_key] = meshed
     return meshed
 
 
