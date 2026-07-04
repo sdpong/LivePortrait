@@ -99,10 +99,12 @@ def grid_sample_3d_fallback(input: torch.Tensor, grid: torch.Tensor, **kwargs) -
 
     On CUDA this is a no-op wrapper around F.grid_sample.
     On MPS (Apple Silicon), grid_sample with 5D input (3D volume sampling)
-    is not natively supported. We explicitly move tensors to CPU,
-    run grid_sample there, and move the result back—this avoids
-    the opaque fallback error and can be slightly faster than
-    PYTORCH_ENABLE_MPS_FALLBACK because we batch the transfer.
+    is not natively supported. We move data to CPU, compute there,
+    and move the result back to MPS.
+
+    The CPU computation is robust: we create fresh CPU tensors via
+    .detach().float().cpu().clone() to avoid MPS memory sync issues
+    that can cause segfaults on some macOS configurations.
 
     Args:
         input: 5D tensor (N, C, D_in, H_in, W_in)
@@ -115,11 +117,14 @@ def grid_sample_3d_fallback(input: torch.Tensor, grid: torch.Tensor, **kwargs) -
     import torch.nn.functional as F
 
     if input.device.type == 'mps':
-        # Detach + clone before moving to CPU to avoid MPS memory
-        # synchronization issues (segfault on some PyTorch versions)
-        input_cpu = input.detach().clone().cpu()
-        grid_cpu = grid.detach().clone().cpu()
+        # Force everything to clean CPU tensors to avoid MPS segfaults.
+        # .detach() breaks the computation graph (we don't need backward)
+        # .float() ensures consistent dtype on CPU
+        # .cpu() moves to system memory
+        # .clone() ensures no shared storage with MPS backend
+        input_cpu = input.detach().float().cpu().clone()
+        grid_cpu = grid.detach().float().cpu().clone()
         output = F.grid_sample(input_cpu, grid_cpu, **kwargs)
-        return output.to('mps')
+        return output.to(input.device)
     else:
         return F.grid_sample(input, grid, **kwargs)
