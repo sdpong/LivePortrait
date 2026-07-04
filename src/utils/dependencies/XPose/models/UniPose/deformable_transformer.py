@@ -18,6 +18,7 @@
 
 import math
 import copy
+import contextlib
 import torch
 import torch.utils.checkpoint as checkpoint
 from torch import nn, Tensor
@@ -1049,7 +1050,7 @@ class DeformableTransformerDecoderLayer(nn.Module):
 
     def forward_ffn(self, tgt, ipdb_flag=False):
 
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.autocast('cuda', enabled=False) if torch.cuda.is_available() else contextlib.nullcontext():
             tgt2 = self.linear2(self.dropout3(self.activation(self.linear1(tgt))))
 
         tgt = tgt + self.dropout4(tgt2)

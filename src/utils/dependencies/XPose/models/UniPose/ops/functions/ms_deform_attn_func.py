@@ -10,26 +10,39 @@ from __future__ import absolute_import
 from __future__ import print_function
 from __future__ import division
 
+import contextlib
 import torch
 import torch.nn.functional as F
 from torch.autograd import Function
 from torch.autograd.function import once_differentiable
 
-import MultiScaleDeformableAttention as MSDA
+# Try to import the CUDA C extension; fall back to pure PyTorch if unavailable
+_MS_CUDA_EXT_AVAILABLE = False
+try:
+    import MultiScaleDeformableAttention as MSDA
+    _MS_CUDA_EXT_AVAILABLE = True
+except ImportError:
+    pass
 
 
 class MSDeformAttnFunction(Function):
     @staticmethod
     def forward(ctx, value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights, im2col_step):
-        ctx.im2col_step = im2col_step
-        output = MSDA.ms_deform_attn_forward(
-            value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights, ctx.im2col_step)
-        ctx.save_for_backward(value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights)
-        return output
+        if _MS_CUDA_EXT_AVAILABLE:
+            ctx.im2col_step = im2col_step
+            output = MSDA.ms_deform_attn_forward(
+                value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights, ctx.im2col_step)
+            ctx.save_for_backward(value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights)
+            return output
+        else:
+            # Pure PyTorch fallback (no backward support for fallback path)
+            return ms_deform_attn_core_pytorch(value, value_spatial_shapes, sampling_locations, attention_weights)
 
     @staticmethod
     @once_differentiable
     def backward(ctx, grad_output):
+        if not _MS_CUDA_EXT_AVAILABLE:
+            raise NotImplementedError("Backward not supported in pure PyTorch fallback mode")
         value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights = ctx.saved_tensors
         grad_value, grad_sampling_loc, grad_attn_weight = \
             MSDA.ms_deform_attn_backward(
@@ -39,8 +52,10 @@ class MSDeformAttnFunction(Function):
 
 
 def ms_deform_attn_core_pytorch(value, value_spatial_shapes, sampling_locations, attention_weights):
-    # for debug and test only,
-    # need to use cuda version instead
+    """Pure PyTorch implementation of multi-scale deformable attention.
+    Works on any device (CUDA, MPS, CPU). Used as fallback when the CUDA
+    C extension is not available.
+    """
     N_, S_, M_, D_ = value.shape
     _, Lq_, M_, L_, P_, _ = sampling_locations.shape
     value_list = value.split([H_ * W_ for H_, W_ in value_spatial_shapes], dim=1)

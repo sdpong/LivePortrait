@@ -10,7 +10,11 @@ warnings.filterwarnings("ignore", message="torch.utils.checkpoint: please pass i
 warnings.filterwarnings("ignore", message="None of the inputs have requires_grad=True. Gradients will be None")
 
 import torch
-torch.backends.cudnn.benchmark = True # disable CUDNN_BACKEND_EXECUTION_PLAN_DESCRIPTOR warning
+if torch.cuda.is_available():
+    try:
+        torch.backends.cudnn.benchmark = True # disable CUDNN_BACKEND_EXECUTION_PLAN_DESCRIPTOR warning
+    except AttributeError:
+        pass
 
 import cv2; cv2.setNumThreads(0); cv2.ocl.setUseOpenCL(False)
 import numpy as np
@@ -30,6 +34,7 @@ from .utils.helper import mkdir, basename, dct2device, is_video, is_template, re
 from .utils.rprint import rlog as log
 # from .utils.viz import viz_lmk
 from .live_portrait_wrapper import LivePortraitWrapperAnimal
+from .utils.device import empty_cache
 
 
 def make_abs_path(fn):
@@ -185,6 +190,10 @@ class LivePortraitPipelineAnimal(object):
             out = self.live_portrait_wrapper_animal.warp_decode(f_s, x_s, x_d_i)
             I_p_i = self.live_portrait_wrapper_animal.parse_output(out['out'])[0]
             I_p_lst.append(I_p_i)
+
+            # Free MPS GPU memory periodically to prevent OOM on long videos
+            if device == "mps" and i % 10 == 9:
+                empty_cache(device)
 
             if inf_cfg.flag_pasteback and inf_cfg.flag_do_crop and inf_cfg.flag_stitching:
                 I_p_pstbk = paste_back(I_p_i, crop_info['M_c2o'], img_rgb, mask_ori_float)

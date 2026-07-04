@@ -46,7 +46,15 @@ def get_extensions():
             "-D__CUDA_NO_HALF2_OPERATORS__",
         ]
     else:
-        raise NotImplementedError('Cuda is not availabel')
+        # Build CPU-only extension; the pure PyTorch fallback in
+        # ms_deform_attn_func.py will be used at runtime when CUDA is
+        # not available, so a working C extension is not required.
+        import warnings
+        warnings.warn(
+            "CUDA is not available. Building MultiScaleDeformableAttention "
+            "without CUDA support. The pure PyTorch fallback will be used "
+            "at runtime (slower but functional on MPS/CPU)."
+        )
 
     sources = [os.path.join(extensions_dir, s) for s in sources]
     include_dirs = [extensions_dir]

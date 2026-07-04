@@ -17,6 +17,7 @@ from .utils.camera import headpose_pred_to_degree, get_rotation_matrix
 from .utils.retargeting_utils import calc_eye_close_ratio, calc_lip_close_ratio
 from .config.inference_config import InferenceConfig
 from .utils.rprint import rlog as log
+from .utils.device import select_device, inference_ctx as _inference_ctx
 
 
 class LivePortraitWrapper(object):
@@ -29,16 +30,7 @@ class LivePortraitWrapper(object):
         self.inference_cfg = inference_cfg
         self.device_id = inference_cfg.device_id
         self.compile = inference_cfg.flag_do_torch_compile
-        if inference_cfg.flag_force_cpu:
-            self.device = 'cpu'
-        else:
-            try:
-                if torch.backends.mps.is_available():
-                    self.device = 'mps'
-                else:
-                    self.device = 'cuda:' + str(self.device_id)
-            except:
-                self.device = 'cuda:' + str(self.device_id)
+        self.device = select_device(self.device_id, inference_cfg.flag_force_cpu)
 
         model_config = yaml.load(open(inference_cfg.models_config, 'r'), Loader=yaml.SafeLoader)
         # init F
@@ -62,18 +54,30 @@ class LivePortraitWrapper(object):
         # Optimize for inference
         if self.compile:
             torch._dynamo.config.suppress_errors = True  # Suppress errors and fall back to eager execution
-            self.warping_module = torch.compile(self.warping_module, mode='max-autotune')
-            self.spade_generator = torch.compile(self.spade_generator, mode='max-autotune')
+            if self.device.startswith("cuda"):
+                self.warping_module = torch.compile(self.warping_module, mode='max-autotune')
+                self.spade_generator = torch.compile(self.spade_generator, mode='max-autotune')
+            elif self.device == "mps":
+                # On MPS, use 'default' mode — 'max-autotune' attempts
+                # CUDA-specific optimizations (CUDA graphs, etc.) that fail.
+                # Only compile spade_generator; warping_module contains
+                # Conv3d + 3D grid_sample with MPS compatibility issues.
+                try:
+                    self.spade_generator = torch.compile(self.spade_generator, mode='default')
+                    log("torch.compile enabled for spade_generator on MPS (mode='default')")
+                except Exception as e:
+                    log(f"torch.compile on MPS failed: {e}. Falling back to eager mode.")
+            else:
+                # CPU compilation for testing/debugging
+                try:
+                    self.spade_generator = torch.compile(self.spade_generator, mode='default')
+                except Exception:
+                    pass
 
         self.timer = Timer()
 
     def inference_ctx(self):
-        if self.device == "mps":
-            ctx = contextlib.nullcontext()
-        else:
-            ctx = torch.autocast(device_type=self.device[:4], dtype=torch.float16,
-                                 enabled=self.inference_cfg.flag_use_half_precision)
-        return ctx
+        return _inference_ctx(self.device, self.inference_cfg.flag_use_half_precision)
 
     def update_config(self, user_args):
         for k, v in user_args.items():
@@ -281,8 +285,8 @@ class LivePortraitWrapper(object):
         """
         # The line 18 in Algorithm 1: D(W(f_s; x_s, x′_d,i)）
         with torch.no_grad(), self.inference_ctx():
-            if self.compile:
-                # Mark the beginning of a new CUDA Graph step
+            if self.compile and self.device.startswith("cuda"):
+                # Mark the beginning of a new CUDA Graph step (CUDA only)
                 torch.compiler.cudagraph_mark_step_begin()
             # get decoder input
             ret_dct = self.warping_module(feature_3d, kp_source=kp_source, kp_driving=kp_driving)
@@ -344,16 +348,7 @@ class LivePortraitWrapperAnimal(LivePortraitWrapper):
         self.inference_cfg = inference_cfg
         self.device_id = inference_cfg.device_id
         self.compile = inference_cfg.flag_do_torch_compile
-        if inference_cfg.flag_force_cpu:
-            self.device = 'cpu'
-        else:
-            try: 
-                if torch.backends.mps.is_available():
-                    self.device = 'mps'
-                else:
-                    self.device = 'cuda:' + str(self.device_id)
-            except:
-                    self.device = 'cuda:' + str(self.device_id)
+        self.device = select_device(self.device_id, inference_cfg.flag_force_cpu)
 
         model_config = yaml.load(open(inference_cfg.models_config, 'r'), Loader=yaml.SafeLoader)
         # init F
@@ -378,7 +373,19 @@ class LivePortraitWrapperAnimal(LivePortraitWrapper):
         # Optimize for inference
         if self.compile:
             torch._dynamo.config.suppress_errors = True  # Suppress errors and fall back to eager execution
-            self.warping_module = torch.compile(self.warping_module, mode='max-autotune')
-            self.spade_generator = torch.compile(self.spade_generator, mode='max-autotune')
+            if self.device.startswith("cuda"):
+                self.warping_module = torch.compile(self.warping_module, mode='max-autotune')
+                self.spade_generator = torch.compile(self.spade_generator, mode='max-autotune')
+            elif self.device == "mps":
+                try:
+                    self.spade_generator = torch.compile(self.spade_generator, mode='default')
+                    log("torch.compile enabled for spade_generator on MPS (mode='default')")
+                except Exception as e:
+                    log(f"torch.compile on MPS failed: {e}. Falling back to eager mode.")
+            else:
+                try:
+                    self.spade_generator = torch.compile(self.spade_generator, mode='default')
+                except Exception:
+                    pass
 
         self.timer = Timer()
